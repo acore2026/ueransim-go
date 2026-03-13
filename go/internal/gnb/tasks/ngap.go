@@ -44,7 +44,7 @@ func (h *GnbNgapTaskHandler) OnStart(ctx context.Context, t *runtime.Task) error
 		Type: "ngap_to_sctp",
 		Payload: sctp.SendMessage{
 			Stream: 0,
-			Ppid:   0x3c000000, // NGAP PPID
+			Ppid:   60, // NGAP PPID
 			Data:   encoded,
 		},
 	})

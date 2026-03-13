@@ -3,11 +3,14 @@ package gnb
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
+	"time"
 
 	"github.com/acore2026/ueransim-go/internal/config"
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/gnb/tasks"
+	"github.com/acore2026/ueransim-go/internal/utils"
 )
 
 type Node struct {
@@ -20,22 +23,23 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	sctpLogger := logger.With("subsystem", "sctp")
 	ngapLogger := logger.With("subsystem", "ngap")
 
-	// Placeholder for other tasks
-	gtpLogger := logger.With("subsystem", "gtp")
+	// 2. RLS Task
 	rlsLogger := logger.With("subsystem", "rls")
-	gtpTask := runtime.NewTask("gnb-gtp", gtpLogger, newHeartbeatHandler(gtpLogger, "gnb-gtp"), 16)
-	rlsTask := runtime.NewTask("gnb-rls", rlsLogger, newHeartbeatHandler(rlsLogger, "gnb-rls"), 16)
+	rlsAddr := fmt.Sprintf("%s:%d", cfg.LinkIP, 38412)
+	rlsHandler := NewRlsTaskHandler(rlsLogger, rlsAddr)
+	rlsTask := runtime.NewTask("gnb-rls", rlsLogger, rlsHandler, 64)
 
-	// 1. NGAP Task
+	// 3. NGAP Task
 	gnbId, _ := hex.DecodeString(cfg.GNBID)
-	plmnId, _ := hex.DecodeString(cfg.MCC + cfg.MNC) // Simplified
-	
-	// Pre-declare sctpTask so NGAP can reference it, but we need to create handlers first.
-	// Actually, we need to create tasks in reverse order of dependency if they need pointers.
+	plmnId := utils.EncodePlmn(cfg.MCC, cfg.MNC)
 	
 	// Create tasks without handlers first
 	ngapTask := runtime.NewTask("gnb-ngap", ngapLogger, nil, 64)
 	sctpTask := runtime.NewTask("gnb-sctp", sctpLogger, nil, 64)
+
+	// Create remaining tasks
+	gtpLogger := logger.With("subsystem", "gtp")
+	gtpTask := runtime.NewTask("gnb-gtp", gtpLogger, newHeartbeatHandler(gtpLogger, "gnb-gtp"), 16)
 
 	// Now create handlers with task pointers
 	amfAddr := "127.0.0.1"
@@ -66,4 +70,37 @@ func (n *Node) Run(ctx context.Context) error {
 		"mnc", n.cfg.MNC,
 	)
 	return n.group.Run(ctx)
+}
+
+type heartbeatHandler struct {
+	name   string
+	logger logging.Logger
+	tick   runtime.PeriodicTask
+}
+
+func newHeartbeatHandler(logger logging.Logger, name string) *heartbeatHandler {
+	return &heartbeatHandler{
+		name:   name,
+		logger: logger,
+		tick:   runtime.NewPeriodicTask(10*time.Second, logger),
+	}
+}
+
+func (h *heartbeatHandler) OnStart(ctx context.Context, task *runtime.Task) error {
+	h.tick.Start(ctx, task)
+	h.logger.Info("initialized")
+	return nil
+}
+
+func (h *heartbeatHandler) OnMessage(_ context.Context, msg runtime.Message) error {
+	if msg.Type == runtime.MessageTypeTick {
+		h.logger.Info("heartbeat", "task", h.name)
+		return nil
+	}
+	return nil
+}
+
+func (h *heartbeatHandler) OnStop(context.Context) error {
+	h.logger.Info("shutdown complete")
+	return nil
 }

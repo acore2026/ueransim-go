@@ -1,0 +1,20 @@
+supi: 'imsi-208930000000001'
+mcc: '208'
+mnc: '93'
+key: '8baf473f2f8fd09487cccbd5d2273bca'
+op: '8e27b6af87a61c81adc7383962485919'
+opType: 'OPC'
+amf: '10.100.200.16'
+imei: '356938035643803'
+imeiSv: '4370816125816151'
+tunNetmask: '255.255.255.0'
+
+gnbSearchList:
+  - 10.100.200.1:38412
+
+sessions:
+  - type: 'IPv4'
+    apn: 'internet'
+    slice:
+      sst: 0x1
+      sd: 0x010203

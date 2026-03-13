@@ -2,11 +2,9 @@ package ue
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
-	"github.com/acore2026/ueransim-go/internal/rls"
 	"github.com/acore2026/ueransim-go/internal/rrc"
 )
 

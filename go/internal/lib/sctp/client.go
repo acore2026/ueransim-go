@@ -95,7 +95,6 @@ func (h *ClientTaskHandler) OnStart(ctx context.Context, t *runtime.Task) error 
 	
 	// Setup InitMsg similar to C++ (10, 10, 10, 10000)
 	// This library sets defaults internally, but we can set InitMsg if needed
-	// using sctp.InitMsg. For now, rely on standard OS defaults for simplicity.
 	
 	// Enable receiving SCTP_SNDRCV events
 	if err := conn.SubscribeEvents(sctp.SCTP_EVENT_DATA_IO); err != nil {
@@ -171,7 +170,7 @@ func (h *ClientTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) 
 
 		info := &sctp.SndRcvInfo{
 			Stream: uint16(payload.Stream),
-			PPID:   uint32(payload.Ppid),
+			PPID:   payload.Ppid,
 		}
 		
 		_, err := h.conn.SCTPWrite(payload.Data, info)

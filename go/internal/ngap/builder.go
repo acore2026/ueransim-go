@@ -38,6 +38,37 @@ func BuildNGSetupRequest(gnbName string, gnbID []byte, bitLength uint64, plmnID 
 								},
 							},
 							{
+								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDSupportedTAList},
+								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentReject},
+								Value: ngapType.NGSetupRequestIEsValue{
+									Present: ngapType.NGSetupRequestIEsPresentSupportedTAList,
+									SupportedTAList: &ngapType.SupportedTAList{
+										List: []ngapType.SupportedTAItem{
+											{
+												TAC: ngapType.TAC{Value: aper.OctetString([]byte{0x00, 0x00, 0x01})},
+												BroadcastPLMNList: ngapType.BroadcastPLMNList{
+													List: []ngapType.BroadcastPLMNItem{
+														{
+															PLMNIdentity: ngapType.PLMNIdentity{Value: aper.OctetString(plmnID)},
+															TAISliceSupportList: ngapType.SliceSupportList{
+																List: []ngapType.SliceSupportItem{
+																	{
+																		SNSSAI: ngapType.SNSSAI{
+																			SST: ngapType.SST{Value: []byte{0x01}},
+																			SD:  &ngapType.SD{Value: []byte{0x01, 0x02, 0x03}},
+																		},
+																	},
+																},
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+							{
 								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDRANNodeName},
 								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentIgnore},
 								Value: ngapType.NGSetupRequestIEsValue{

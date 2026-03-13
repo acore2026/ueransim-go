@@ -26,7 +26,11 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 		gnbAddr = cfg.GNBSearchList[0]
 	}
 	
-	rlsHandler, _ := NewRlsTaskHandler(rlsLogger, gnbAddr, 1) // sti=1 for now
+	rlsHandler, err := NewRlsTaskHandler(rlsLogger, gnbAddr, 1) // sti=1 for now
+	if err != nil {
+		logger.Error("failed to create RLS handler", "error", err)
+		return nil
+	}
 	rlsTask := runtime.NewTask("ue-rls", rlsLogger, rlsHandler, 64)
 
 	// 2. Setup RRC Task

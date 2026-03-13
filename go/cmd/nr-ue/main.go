@@ -24,6 +24,11 @@ func main() {
 	}
 
 	node := ue.New(cfg, logger.With("node", cfg.NodeName()))
+	if node == nil {
+		logger.Error("failed to create UE node")
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
