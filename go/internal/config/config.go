@@ -52,6 +52,7 @@ type GNBConfig struct {
 	Name            string      `yaml:"name"`
 	MCC             string      `yaml:"mcc"`
 	MNC             string      `yaml:"mnc"`
+	GNBID           string      `yaml:"gnbId"`
 	NCI             string      `yaml:"nci"`
 	IDLength        int         `yaml:"idLength"`
 	TAC             int         `yaml:"tac"`

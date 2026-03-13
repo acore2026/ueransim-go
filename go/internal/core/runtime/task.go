@@ -56,6 +56,10 @@ func (t *Task) Send(msg Message) error {
 	}
 }
 
+func (t *Task) SetHandler(handler TaskHandler) {
+	t.handler = handler
+}
+
 func (t *Task) Run(ctx context.Context) error {
 	t.logger.Info("starting")
 	defer t.logger.Info("stopped")

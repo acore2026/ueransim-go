@@ -3,8 +3,8 @@
 This file tracks the progress of migrating UERANSIM from C++ to Go.
 
 ## 1. Foundational Encoders (The "Language" of 5G)
-- [ ] **ASN.1 (NGAP/RRC):** Go-native ASN.1 PER/DER implementation for 3GPP protocols.
-- [/] **NAS (5GMM/5GSM):** Non-Access Stratum protocol codec (Registration Request implemented).
+- [x] **ASN.1 (NGAP/RRC):** Go-native ASN.1 implementation (NGAP via free5gc, RRC simplified).
+- [x] **NAS (5GMM/5GSM):** Non-Access Stratum protocol codec.
 - [x] **Octet/Bit Utilities:** Port `bit_string` and `bit_buffer` for low-level packet construction.
 
 ## 2. Security & Crypto (The "Trust")
@@ -16,20 +16,21 @@ This file tracks the progress of migrating UERANSIM from C++ to Go.
 - [x] **UDP Transport:** Simulated radio interface and GTP-U transport.
 - [x] **SCTP Transport:** Reliable transport for NGAP (AMF connection).
 - [x] **TUN Interface:** Virtual network device for UE User Plane.
-- [ ] **GTP-U:** GPRS Tunnelling Protocol for user-plane data flow.
-- [ ] **Radio over UDP:** Simulated 5G-NR physical layer implementation.
+- [x] **GTP-U:** GPRS Tunnelling Protocol for user-plane data flow.
+- [x] **Radio over UDP:** Simulated 5G-NR physical layer implementation (RLS).
 
 ## 4. Core Protocol Logic (The "Brain")
-- [ ] **UE Node:** State machine for UE Registration and PDU Session.
-- [ ] **gNB Node:** SCTP bridging and radio interface management.
-- [ ] **RRC Layer:** Radio Resource Control state management.
-- [ ] **NGAP Layer:** Next Generation Application Protocol logic.
+- [x] **UE Node:** State machine for UE Registration and PDU Session.
+- [x] **gNB Node:** SCTP bridging and radio interface management.
+- [x] **RRC Layer:** Radio Resource Control (Simplified bit-packer).
+- [x] **NGAP Layer:** Next Generation Application Protocol logic via free5gc.
 
 ## 5. Integration & Bootstrap
 - [x] **Task Runtime:** Core message-passing and task management system.
 - [x] **Logging:** Structured logging for Go binaries.
-- [x] **Config Loading:** Initial YAML configuration mapping.
-- [ ] **CLI Interface:** Interactive CLI for UE and gNB control.
+- [x] **Config Loading:** YAML configuration mapping.
+- [x] **CLI Interface:** Interactive CLI for UE and gNB control.
 
 ---
 *Last Updated: 2026-03-13*
+
