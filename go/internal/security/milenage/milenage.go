@@ -1,6 +1,7 @@
 package milenage
 
 import (
+	"bytes"
 	"crypto/aes"
 )
 
@@ -82,7 +83,7 @@ func (m *Milenage) F2345(rand []byte) (res, ck, ik, ak, akStar []byte) {
 	for i := 0; i < 16; i++ {
 		out25[i] ^= m.opc[i]
 	}
-	// f2 is bytes 8..15, f5 is bytes 0..5
+	// RES is bytes 8..15, AK is bytes 0..5
 	res = make([]byte, 8)
 	copy(res, out25[8:16])
 	ak = make([]byte, 6)
@@ -128,6 +129,29 @@ func (m *Milenage) F2345(rand []byte) (res, ck, ik, ak, akStar []byte) {
 	}
 
 	return
+}
+
+func (m *Milenage) VerifyAutn(rand []byte, autn [16]byte) (bool, []byte, []byte, []byte, []byte) {
+	// 1. Get AK
+	_, _, _, ak, _ := m.F2345(rand)
+	
+	// 2. Extract SQN ^ AK
+	sqnAk := autn[0:6]
+	sqn := make([]byte, 6)
+	for i := 0; i < 6; i++ {
+		sqn[i] = sqnAk[i] ^ ak[i]
+	}
+	
+	// 3. Extract AMF
+	amf := autn[6:8]
+	
+	// 4. Extract MAC
+	mac := autn[8:16]
+	
+	// 5. Calculate XMAC
+	xmac, _ := m.F1(rand, sqn, amf)
+	
+	return bytes.Equal(mac, xmac), sqn, ak, mac, xmac
 }
 
 func GenerateOpC(k, op []byte) []byte {

@@ -1,6 +1,8 @@
 package nas
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/acore2026/ueransim-go/internal/nas"
 )
 
@@ -26,31 +28,43 @@ func NewSecurityContext(kNasInt, kNasEnc []byte, integrityAlg, cipheringAlg byte
 }
 
 func (sc *SecurityContext) Protect(data []byte, headerType nas.SecurityHeaderType) ([]byte, error) {
-	// 1. Ciphering (if required)
-	// For simplicity, we implement plain integrity first as many SMC responses are just integrity protected
+	direction := byte(1) // Uplink
+	bearer := byte(0)
 	
-	// 2. Integrity
-	if sc.IntegrityAlgorithm != 0 {
-		// NIA2 (AES-CMAC)
-		mac, err := NIA2(sc.KnasInt, sc.UlCount, 0, 0, data)
+	count := sc.UlCount
+	if headerType == nas.SecurityHeaderTypeIntegrityProtectedWithNewSecurityContext || headerType == nas.SecurityHeaderTypeIntegrityProtectedAndCipheredWithNewSecurityContext {
+		count = 0
+	}
+	
+	payload := data
+	if sc.CipheringAlgorithm != 0 && (headerType == nas.SecurityHeaderTypeIntegrityProtectedAndCiphered || headerType == nas.SecurityHeaderTypeIntegrityProtectedAndCipheredWithNewSecurityContext) {
+		var err error
+		payload, err = NEA2(sc.KnasEnc, count, bearer, direction, data)
 		if err != nil {
 			return nil, err
 		}
-		
-		// Build Protected NAS PDU
-		// [PD(1)][Security Header(1)][MAC(4)][Sequence Number(1)][NAS PDU(n)]
-		res := make([]byte, 7+len(data))
-		res[0] = nas.PD_5G_MOBILITY_MANAGEMENT
-		res[1] = byte(headerType)
-		copy(res[2:6], mac)
-		res[6] = byte(sc.UlCount & 0xFF)
-		copy(res[7:], data)
-		
-		sc.UlCount++
-		return res, nil
 	}
 	
-	return data, nil
+	// TS 24.501 NIA2: MAC over [SN(1)][Ciphered NAS PDU(n)]
+	msgForMac := make([]byte, 1+len(payload))
+	msgForMac[0] = byte(count & 0xFF)
+	copy(msgForMac[1:], payload)
+	
+	mac, err := NIA2(sc.KnasInt, count, bearer, direction, msgForMac)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Final: [PD(1)][HeaderType(1)][MAC(4)][SN(1)][Ciphered NAS PDU(n)]
+	res := make([]byte, 7+len(payload))
+	res[0] = nas.PD_5G_MOBILITY_MANAGEMENT
+	res[1] = byte(headerType)
+	copy(res[2:6], mac)
+	res[6] = byte(count & 0xFF)
+	copy(res[7:], payload)
+	
+	sc.UlCount++
+	return res, nil
 }
 
 func (sc *SecurityContext) Unprotect(data []byte) ([]byte, nas.SecurityHeaderType, error) {
@@ -63,10 +77,31 @@ func (sc *SecurityContext) Unprotect(data []byte) ([]byte, nas.SecurityHeaderTyp
 		return data, headerType, nil
 	}
 	
-	// For now, we just strip the security header and return the inner NAS PDU
-	// In a real implementation, we would verify MAC and decipher
+	direction := byte(0) // Downlink
+	bearer := byte(0)
 	
-	innerNas := data[7:]
-	sc.DlCount++
-	return innerNas, headerType, nil
+	mac := data[2:6]
+	sn := uint32(data[6])
+	payload := data[7:]
+	
+	count := (sc.DlCount & 0xFFFFFF00) | sn
+	if headerType == nas.SecurityHeaderTypeIntegrityProtectedWithNewSecurityContext {
+		count = 0
+	}
+	
+	msgForMac := make([]byte, 1+len(payload))
+	msgForMac[0] = byte(sn)
+	copy(msgForMac[1:], payload)
+	
+	expectedMac, err := NIA2(sc.KnasInt, count, bearer, direction, msgForMac)
+	if err != nil {
+		return nil, headerType, err
+	}
+	
+	if !bytes.Equal(mac, expectedMac) {
+		return nil, headerType, fmt.Errorf("NAS MAC verification failed")
+	}
+	
+	sc.DlCount = count + 1
+	return payload, headerType, nil
 }

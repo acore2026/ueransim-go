@@ -30,6 +30,7 @@ type NasTaskHandler struct {
 	mnc    string
 	key    []byte
 	opc    []byte
+	amf    string
 	
 	state NasState
 	sec   *secnas.SecurityContext
@@ -51,6 +52,7 @@ func NewNasTaskHandler(logger logging.Logger, cfg *config.UEConfig, rrcTask *run
 		mnc:     cfg.MNC,
 		key:     key,
 		opc:     opc,
+		amf:     cfg.AMF,
 		state:   StateDeregistered,
 		rrcTask: rrcTask,
 	}
@@ -101,7 +103,6 @@ func (h *NasTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 	switch msg.Type {
 	case "rrc_to_nas":
 		nasPdu := msg.Payload.([]byte)
-		h.logger.Info("received NAS PDU from RRC", "hex", hex.EncodeToString(nasPdu))
 		
 		// Unprotect if needed
 		if h.sec != nil && len(nasPdu) > 7 && nasPdu[1] != 0 {
@@ -141,25 +142,30 @@ func (h *NasTaskHandler) handleAuthenticationRequest(data []byte) error {
 	}
 	
 	m := milenage.NewMilenage(h.key, h.opc)
-	res, ck, ik, _, _ := m.F2345(req.Rand[:])
 	
-	mcc := h.mcc
-	for len(mcc) < 3 {
-		mcc = "0" + mcc
-	}
-	mnc := h.mnc
-	for len(mnc) < 3 {
-		mnc = "0" + mnc
-	}
-	snName := fmt.Sprintf("5G:mnc%s.mcc%s.3gppnetwork.org", mnc, mcc)
-	
+	// Verify AUTN
+	ok, sqn, ak, mac, xmac := m.VerifyAutn(req.Rand[:], req.Autn)
 	h.logger.Info("auth debug", 
 		"rand", hex.EncodeToString(req.Rand[:]),
 		"autn", hex.EncodeToString(req.Autn[:]),
-		"ck", hex.EncodeToString(ck),
-		"ik", hex.EncodeToString(ik),
-		"res", hex.EncodeToString(res),
-		"snName", snName)
+		"derived_sqn", hex.EncodeToString(sqn),
+		"derived_ak", hex.EncodeToString(ak),
+		"mac", hex.EncodeToString(mac),
+		"xmac", hex.EncodeToString(xmac),
+		"autn_ok", ok)
+	
+	if !ok {
+		h.logger.Error("AUTN verification failed")
+		// Continue for now to see what RES* we get
+	}
+	
+	res, ck, ik, _, _ := m.F2345(req.Rand[:])
+	
+	mcc := h.mcc
+	for len(mcc) < 3 { mcc = "0" + mcc }
+	mnc := h.mnc
+	for len(mnc) < 3 { mnc = "0" + mnc }
+	snName := fmt.Sprintf("5G:mnc%s.mcc%s.3gppnetwork.org", mnc, mcc)
 	
 	resStar := kdf.DeriveResStar(ck, ik, req.Rand[:], res, snName)
 	
@@ -167,11 +173,10 @@ func (h *NasTaskHandler) handleAuthenticationRequest(data []byte) error {
 	kSeaf := kdf.DeriveKseaf(ck, ik, snName)
 	kAmf := kdf.DeriveKamf(kSeaf, h.supi, []byte{0x00, 0x00}) 
 	
-	// Store K_AMF temporarily in a new security context
 	h.sec = secnas.NewSecurityContext(nil, nil, 0, 0)
 	h.sec.KnasInt = kAmf 
 	
-	h.logger.Info("sending Authentication Response")
+	h.logger.Info("sending Authentication Response", "resStar", hex.EncodeToString(resStar))
 	resp := &nas.AuthenticationResponse{ResStar: resStar}
 	return h.sendPlainNas(resp.Encode().Data())
 }
@@ -184,7 +189,6 @@ func (h *NasTaskHandler) handleSecurityModeCommand(data []byte) error {
 		return err
 	}
 	
-	// Derive NAS keys from K_AMF (currently stored in h.sec.KnasInt)
 	kAmf := h.sec.KnasInt
 	h.sec.KnasEnc = kdf.DeriveKnas(kAmf, 1, cmd.SelectedCipheringAlgorithm)
 	h.sec.KnasInt = kdf.DeriveKnas(kAmf, 2, cmd.SelectedIntegrityAlgorithm)
