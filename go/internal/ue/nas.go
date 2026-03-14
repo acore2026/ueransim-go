@@ -2,6 +2,7 @@ package ue
 
 import (
 	"context"
+	"encoding/hex"
 
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
@@ -57,6 +58,10 @@ func (h *NasTaskHandler) sendRegistrationRequest(t *runtime.Task) error {
 				MSIN: msin,
 			},
 		},
+		UeSecurityCapability: &nas.UeSecurityCapability{
+			EA0: true, EA1: true, EA2: true,
+			IA0: true, IA1: true, IA2: true,
+		},
 	}
 	
 	buf := req.Encode()
@@ -69,7 +74,13 @@ func (h *NasTaskHandler) sendRegistrationRequest(t *runtime.Task) error {
 }
 
 func (h *NasTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) error {
-	h.logger.Info("received message", "type", msg.Type)
+	switch msg.Type {
+	case "rrc_to_nas":
+		h.logger.Info("received NAS PDU from RRC")
+		nasPdu := msg.Payload.([]byte)
+		// For now just log it
+		h.logger.Info("received NAS message", "len", len(nasPdu), "data", hex.EncodeToString(nasPdu))
+	}
 	return nil
 }
 

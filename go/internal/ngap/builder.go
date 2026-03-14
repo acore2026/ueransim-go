@@ -161,3 +161,29 @@ func BuildInitialUEMessage(ranUeNgapID int64, nasPdu []byte, userLocationRefer *
 func Encode(pdu *ngapType.NGAPPDU) ([]byte, error) {
 	return ngap.Encoder(*pdu)
 }
+
+func Decode(data []byte) (*ngapType.NGAPPDU, error) {
+	pdu, err := ngap.Decoder(data)
+	if err != nil {
+		return nil, err
+	}
+	return pdu, nil
+}
+
+func GetNasPdu(pdu *ngapType.NGAPPDU) []byte {
+	if pdu.Present != ngapType.NGAPPDUPresentInitiatingMessage {
+		return nil
+	}
+	ini := pdu.InitiatingMessage
+	if ini.ProcedureCode.Value != ngapType.ProcedureCodeDownlinkNASTransport {
+		return nil
+	}
+	
+	down := ini.Value.DownlinkNASTransport
+	for _, ie := range down.ProtocolIEs.List {
+		if ie.Id.Value == ngapType.ProtocolIEIDNASPDU {
+			return []byte(ie.Value.NASPDU.Value)
+		}
+	}
+	return nil
+}

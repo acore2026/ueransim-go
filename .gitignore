@@ -124,3 +124,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Go
+go/nr-gnb
+go/nr-ue

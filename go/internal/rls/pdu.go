@@ -45,6 +45,14 @@ type RlsMessage struct {
 	PduIds []uint32
 }
 
+func BuildSimpleRrc(nasPdu []byte) []byte {
+	b := utils.NewEmptyBuffer()
+	b.AppendByte(0x01) // Type: Container
+	b.AppendUint32(uint32(len(nasPdu)))
+	b.AppendBytes(nasPdu)
+	return b.Data()
+}
+
 func (m *RlsMessage) Encode() ([]byte, error) {
 	b := utils.NewEmptyBuffer()
 	

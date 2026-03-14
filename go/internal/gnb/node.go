@@ -23,12 +23,6 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	sctpLogger := logger.With("subsystem", "sctp")
 	ngapLogger := logger.With("subsystem", "ngap")
 
-	// 2. RLS Task
-	rlsLogger := logger.With("subsystem", "rls")
-	rlsAddr := fmt.Sprintf("%s:%d", cfg.LinkIP, 38412)
-	rlsHandler := NewRlsTaskHandler(rlsLogger, rlsAddr)
-	rlsTask := runtime.NewTask("gnb-rls", rlsLogger, rlsHandler, 64)
-
 	// 3. NGAP Task
 	gnbId, _ := hex.DecodeString(cfg.GNBID)
 	plmnId := utils.EncodePlmn(cfg.MCC, cfg.MNC)
@@ -36,6 +30,12 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	// Create tasks without handlers first
 	ngapTask := runtime.NewTask("gnb-ngap", ngapLogger, nil, 64)
 	sctpTask := runtime.NewTask("gnb-sctp", sctpLogger, nil, 64)
+
+	// 2. RLS Task
+	rlsLogger := logger.With("subsystem", "rls")
+	rlsAddr := fmt.Sprintf("%s:%d", cfg.LinkIP, 38412)
+	rlsHandler := NewRlsTaskHandler(rlsLogger, rlsAddr, ngapTask)
+	rlsTask := runtime.NewTask("gnb-rls", rlsLogger, rlsHandler, 64)
 
 	// Create remaining tasks
 	gtpLogger := logger.With("subsystem", "gtp")
@@ -49,7 +49,7 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 		amfPort = cfg.AMFConfigs[0].Port
 	}
 
-	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, sctpTask)
+	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, sctpTask, rlsTask)
 	sctpHandler := tasks.NewGnbSctpTaskHandler(sctpLogger, amfAddr, amfPort, ngapTask)
 
 	// Set handlers

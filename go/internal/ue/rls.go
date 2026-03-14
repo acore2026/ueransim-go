@@ -15,9 +15,10 @@ type RlsTaskHandler struct {
 	gnbAddr    *net.UDPAddr
 	udpHandler *udp.ServerTaskHandler
 	sti        uint64
+	rrcTask    *runtime.Task
 }
 
-func NewRlsTaskHandler(logger logging.Logger, gnbAddr string, sti uint64) (*RlsTaskHandler, error) {
+func NewRlsTaskHandler(logger logging.Logger, gnbAddr string, sti uint64, rrcTask *runtime.Task) (*RlsTaskHandler, error) {
 	addr, err := net.ResolveUDPAddr("udp", gnbAddr)
 	if err != nil {
 		return nil, err
@@ -27,13 +28,19 @@ func NewRlsTaskHandler(logger logging.Logger, gnbAddr string, sti uint64) (*RlsT
 		logger:  logger.With("component", "rls"),
 		gnbAddr: addr,
 		sti:     sti,
+		rrcTask: rrcTask,
 	}, nil
+}
+
+func (h *RlsTaskHandler) SetRrcTask(t *runtime.Task) {
+	h.rrcTask = t
 }
 
 func (h *RlsTaskHandler) OnStart(ctx context.Context, t *runtime.Task) error {
 	h.logger.Info("RLS task started")
 	
 	// Start an ephemeral UDP server to talk to gNB
+	// Pass the RLS task itself as the target for UDP receive messages
 	h.udpHandler = udp.NewServerTaskHandler(nil, t, h.logger)
 	return h.udpHandler.OnStart(ctx, t)
 }
@@ -59,7 +66,22 @@ func (h *RlsTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 		
 	case udp.MessageTypeUdpReceive:
 		// Handle incoming radio packets from gNB
-		h.logger.Info("received packet from gNB")
+		h.logger.Info("received radio packet from gNB")
+		
+		payload := msg.Payload.(udp.ReceiveMessage)
+		rlsMsg, err := rls.Decode(payload.Data)
+		if err != nil {
+			h.logger.Error("failed to decode RLS message", "error", err)
+			return nil
+		}
+		
+		if rlsMsg.MsgType == rls.PDU_TRANSMISSION && rlsMsg.PduType == rls.PDU_TYPE_RRC {
+			h.logger.Info("forwarding RRC PDU to RRC task")
+			return h.rrcTask.Send(runtime.Message{
+				Type: "rls_to_rrc",
+				Payload: rlsMsg.Pdu,
+			})
+		}
 	}
 	return nil
 }

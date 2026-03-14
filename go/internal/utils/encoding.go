@@ -32,14 +32,14 @@ func EncodeBcd(s string) []byte {
 	for i := 0; i < len(s); i++ {
 		val := s[i] - '0'
 		if i%2 == 0 {
-			res[i/2] |= (val << 4)
-		} else {
 			res[i/2] |= val
+		} else {
+			res[i/2] |= (val << 4)
 		}
 	}
 	// If odd length, fill last nibble with 0xF
 	if len(s)%2 != 0 {
-		res[len(res)-1] |= 0x0F
+		res[len(res)-1] |= 0xF0
 	}
 	return res
 }

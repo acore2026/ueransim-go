@@ -19,8 +19,10 @@ This subtree contains the Go implementation of UERANSIM, migrated from the origi
     - 5G-AKA (Milenage) authentication.
     - NAS Integrity (NIA2) and Ciphering (NEA2) using AES.
     - 3GPP Key Derivation (KDF).
-- **Nodes:** Functional UE and gNodeB state machines for initial registration.
+- **Nodes:** Functional UE and gNodeB state machines for initial registration (Verified handshake with free5GC).
+- **NAS Transport:** Bidirectional NAS PDU relaying between UE and Core (Uplink/Downlink).
 - **Bootstrap:** YAML configuration loading and basic interactive CLI.
+- **Documentation:** Added `go/VERIFY_REGISTRATION.md` for end-to-end testing.
 
 ## In Progress / Future Work
 

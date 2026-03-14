@@ -11,13 +11,19 @@ import (
 type RrcTaskHandler struct {
 	logger  logging.Logger
 	rlsTask *runtime.Task
+	nasTask *runtime.Task
 }
 
-func NewRrcTaskHandler(logger logging.Logger, rlsTask *runtime.Task) *RrcTaskHandler {
+func NewRrcTaskHandler(logger logging.Logger, rlsTask *runtime.Task, nasTask *runtime.Task) *RrcTaskHandler {
 	return &RrcTaskHandler{
 		logger:  logger.With("component", "rrc"),
 		rlsTask: rlsTask,
+		nasTask: nasTask,
 	}
+}
+
+func (h *RrcTaskHandler) SetNasTask(t *runtime.Task) {
+	h.nasTask = t
 }
 
 func (h *RrcTaskHandler) OnStart(ctx context.Context, t *runtime.Task) error {
@@ -41,6 +47,23 @@ func (h *RrcTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 			Type: "rrc_to_rls",
 			Payload: rrcPdu,
 		})
+		
+	case "rls_to_rrc":
+		h.logger.Info("received RRC PDU from RLS")
+		
+		rrcPdu := msg.Payload.([]byte)
+		// Extract NAS PDU from simplified RRC container
+		if len(rrcPdu) > 5 && rrcPdu[0] == 0x01 {
+			nasLen := int(rrcPdu[1])<<24 | int(rrcPdu[2])<<16 | int(rrcPdu[3])<<8 | int(rrcPdu[4])
+			if len(rrcPdu) >= 5+nasLen {
+				nasPdu := rrcPdu[5 : 5+nasLen]
+				h.logger.Info("forwarding NAS PDU to NAS task")
+				return h.nasTask.Send(runtime.Message{
+					Type: "rrc_to_nas",
+					Payload: nasPdu,
+				})
+			}
+		}
 	}
 	return nil
 }

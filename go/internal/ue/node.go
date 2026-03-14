@@ -26,7 +26,7 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 		gnbAddr = cfg.GNBSearchList[0]
 	}
 	
-	rlsHandler, err := NewRlsTaskHandler(rlsLogger, gnbAddr, 1) // sti=1 for now
+	rlsHandler, err := NewRlsTaskHandler(rlsLogger, gnbAddr, 1, nil) // rrcTask will be set later
 	if err != nil {
 		logger.Error("failed to create RLS handler", "error", err)
 		return nil
@@ -34,12 +34,16 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 	rlsTask := runtime.NewTask("ue-rls", rlsLogger, rlsHandler, 64)
 
 	// 2. Setup RRC Task
-	rrcHandler := NewRrcTaskHandler(rrcLogger, rlsTask)
+	rrcHandler := NewRrcTaskHandler(rrcLogger, rlsTask, nil)
 	rrcTask := runtime.NewTask("ue-rrc", rrcLogger, rrcHandler, 64)
+	
+	rlsHandler.SetRrcTask(rrcTask)
 
 	// 3. Setup NAS Task
 	nasHandler := NewNasTaskHandler(nasLogger, cfg.SUPI, cfg.MCC, cfg.MNC, rrcTask)
 	nasTask := runtime.NewTask("ue-nas", nasLogger, nasHandler, 64)
+	
+	rrcHandler.SetNasTask(nasTask)
 
 	return &Node{
 		cfg:    cfg,
