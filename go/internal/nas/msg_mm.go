@@ -89,25 +89,26 @@ func DecodeAuthenticationRequest(data []byte) (*AuthenticationRequest, error) {
 	
 	offset := 4
 	// ABBA (Mandatory, LV)
+	// Based on hex: 02 00 00
 	abbaLen := int(data[offset])
 	offset += 1 + abbaLen
 	
 	// RAND (Mandatory, TV, IEI=0x21)
 	if len(data) < offset+17 {
-		return nil, fmt.Errorf("missing RAND at offset %d", offset)
+		return nil, fmt.Errorf("missing RAND at offset %d, total len %d", offset, len(data))
 	}
 	if data[offset] != 0x21 {
-		return nil, fmt.Errorf("invalid RAND IEI: 0x%02x", data[offset])
+		return nil, fmt.Errorf("invalid RAND IEI: 0x%02x at offset %d", data[offset], offset)
 	}
 	copy(m.Rand[:], data[offset+1:offset+17])
 	offset += 17
 	
 	// AUTN (Mandatory, TLV, IEI=0x20)
 	if len(data) < offset+18 {
-		return nil, fmt.Errorf("missing AUTN at offset %d", offset)
+		return nil, fmt.Errorf("missing AUTN at offset %d, total len %d", offset, len(data))
 	}
 	if data[offset] != 0x20 {
-		return nil, fmt.Errorf("invalid AUTN IEI: 0x%02x", data[offset])
+		return nil, fmt.Errorf("invalid AUTN IEI: 0x%02x at offset %d", data[offset], offset)
 	}
 	autnLen := int(data[offset+1])
 	if autnLen != 16 {
@@ -132,9 +133,58 @@ func (m *AuthenticationResponse) Encode() *utils.Buffer {
 	// Authentication response parameter (TLV, IEI=0x2D)
 	if len(m.ResStar) > 0 {
 		b.AppendByte(0x2D)
-		b.AppendByte(byte(len(m.ResStar)))
-		b.AppendBytes(m.ResStar)
+		
+		resStar := m.ResStar
+		if len(resStar) > 16 {
+			resStar = resStar[len(resStar)-16:]
+		}
+		
+		b.AppendByte(byte(len(resStar)))
+		b.AppendBytes(resStar)
 	}
+	
+	return b
+}
+
+// SecurityModeCommand message
+type SecurityModeCommand struct {
+	SelectedIntegrityAlgorithm byte
+	SelectedCipheringAlgorithm byte
+	NasKeySetIdentifier        byte
+}
+
+func DecodeSecurityModeCommand(data []byte) (*SecurityModeCommand, error) {
+	if len(data) < 6 {
+		return nil, fmt.Errorf("NAS PDU too short")
+	}
+	if data[2] != MsgTypeSecurityModeCommand {
+		return nil, fmt.Errorf("not a Security Mode Command: 0x%02x", data[2])
+	}
+	
+	m := &SecurityModeCommand{}
+	// data[3]: Selected NAS security algorithms
+	m.SelectedCipheringAlgorithm = (data[3] >> 4) & 0x07
+	m.SelectedIntegrityAlgorithm = data[3] & 0x07
+	
+	// data[4]: bits 4-6 is NasKeySetIdentifier
+	m.NasKeySetIdentifier = (data[4] >> 4) & 0x07
+	
+	return m, nil
+}
+
+// SecurityModeComplete message
+type SecurityModeComplete struct {
+	MobileIdentity IE5gsMobileIdentity
+}
+
+func (m *SecurityModeComplete) Encode() *utils.Buffer {
+	b := utils.NewEmptyBuffer()
+	b.AppendByte(PD_5G_MOBILITY_MANAGEMENT)
+	b.AppendByte(0x00) // Will be updated by security layer
+	b.AppendByte(MsgTypeSecurityModeComplete)
+	
+	// Mobile Identity (Mandatory, TLV)
+	m.MobileIdentity.Encode(b)
 	
 	return b
 }

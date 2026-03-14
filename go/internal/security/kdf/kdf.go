@@ -34,26 +34,36 @@ func KDFBytes(key []byte, fc byte, p [][]byte, l []int) []byte {
 
 // DeriveResStar derives RES* from CK, IK (TS 33.501, Annex A.4)
 func DeriveResStar(ck, ik []byte, rand, res []byte, snName string) []byte {
-	// Key is concatenation of CK and IK
 	key := append(ck, ik...)
+	
+	// RES must be padded to 128 bits (16 bytes)
+	paddedRes := make([]byte, 16)
+	copy(paddedRes[16-len(res):], res)
 	
 	p := [][]byte{
 		[]byte(snName),
 		rand,
-		res,
+		paddedRes,
 	}
 	l := []int{
 		len(snName),
 		len(rand),
-		len(res),
+		16,
 	}
 	
-	// FC = 0x6B
 	k := KDFBytes(key, 0x6B, p, l)
-	
-	// Return the last 16 bytes
 	return k[16:]
 }
+
+// DeriveKseaf derives Kseaf from CK, IK (TS 33.501, Annex A.6)
+func DeriveKseaf(ck, ik []byte, snName string) []byte {
+	key := append(ck, ik...)
+	p := [][]byte{[]byte(snName)}
+	l := []int{len(snName)}
+	return KDFBytes(key, 0x6C, p, l)
+}
+
+// DeriveKamf derives Kamf from Kseaf (TS 33.501, Annex A.7)
 func DeriveKamf(kSeaf []byte, supi string, abba []byte) []byte {
 	p := [][]byte{[]byte(supi), abba}
 	l := []int{len(supi), len(abba)}
@@ -71,12 +81,9 @@ func DeriveKgnb(kAmf []byte, ulCount uint32, accessType byte) []byte {
 }
 
 // DeriveKnas derives KnasInt or KnasEnc from Kamf (TS 33.501)
-// algType: 1 for Encryption, 2 for Integrity
-// algId: 1 for NEA1/NIA1, 2 for NEA2/NIA2, etc.
 func DeriveKnas(kAmf []byte, algType byte, algId byte) []byte {
 	p := [][]byte{{algType}, {algId}}
 	l := []int{1, 1}
 	k := KDFBytes(kAmf, 0x69, p, l)
-	// Return only the last 16 bytes (128 bits)
 	return k[16:]
 }

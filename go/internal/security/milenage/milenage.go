@@ -82,6 +82,7 @@ func (m *Milenage) F2345(rand []byte) (res, ck, ik, ak, akStar []byte) {
 	for i := 0; i < 16; i++ {
 		out25[i] ^= m.opc[i]
 	}
+	// f2 is bytes 8..15, f5 is bytes 0..5
 	res = make([]byte, 8)
 	copy(res, out25[8:16])
 	ak = make([]byte, 6)
