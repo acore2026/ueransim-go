@@ -3,10 +3,14 @@ package ue
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 
+	"github.com/acore2026/ueransim-go/internal/config"
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/nas"
+	"github.com/acore2026/ueransim-go/internal/security/kdf"
+	"github.com/acore2026/ueransim-go/internal/security/milenage"
 )
 
 type NasTaskHandler struct {
@@ -14,16 +18,26 @@ type NasTaskHandler struct {
 	supi   string
 	mcc    string
 	mnc    string
+	key    []byte
+	opc    []byte
 	
 	rrcTask *runtime.Task
 }
 
-func NewNasTaskHandler(logger logging.Logger, supi, mcc, mnc string, rrcTask *runtime.Task) *NasTaskHandler {
+func NewNasTaskHandler(logger logging.Logger, cfg *config.UEConfig, rrcTask *runtime.Task) *NasTaskHandler {
+	key, _ := hex.DecodeString(cfg.Key)
+	opc, _ := hex.DecodeString(cfg.OP)
+	if cfg.OPType == "OP" {
+		opc = milenage.GenerateOpC(key, opc)
+	}
+
 	return &NasTaskHandler{
 		logger:  logger.With("component", "nas"),
-		supi:    supi,
-		mcc:     mcc,
-		mnc:     mnc,
+		supi:    cfg.SUPI,
+		mcc:     cfg.MCC,
+		mnc:     cfg.MNC,
+		key:     key,
+		opc:     opc,
 		rrcTask: rrcTask,
 	}
 }
@@ -78,10 +92,48 @@ func (h *NasTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 	case "rrc_to_nas":
 		h.logger.Info("received NAS PDU from RRC")
 		nasPdu := msg.Payload.([]byte)
-		// For now just log it
-		h.logger.Info("received NAS message", "len", len(nasPdu), "data", hex.EncodeToString(nasPdu))
+		
+		if len(nasPdu) < 3 {
+			return nil
+		}
+		
+		msgType := nasPdu[2]
+		switch msgType {
+		case nas.MsgTypeAuthenticationRequest:
+			return h.handleAuthenticationRequest(nasPdu)
+		default:
+			h.logger.Info("received NAS message", "type", fmt.Sprintf("0x%02x", msgType), "len", len(nasPdu))
+		}
 	}
 	return nil
+}
+
+func (h *NasTaskHandler) handleAuthenticationRequest(data []byte) error {
+	h.logger.Info("handling Authentication Request")
+	
+	req, err := nas.DecodeAuthenticationRequest(data)
+	if err != nil {
+		return err
+	}
+	
+	// Run Milenage
+	m := milenage.NewMilenage(h.key, h.opc)
+	res, ck, ik, _, _ := m.F2345(req.Rand[:])
+	
+	// Derive RES*
+	snName := "5G:mnc093.mcc208.3gppnetwork.org"
+	resStar := kdf.DeriveResStar(ck, ik, req.Rand[:], res, snName)
+	
+	h.logger.Info("sending Authentication Response", "resStar", hex.EncodeToString(resStar))
+	
+	resp := &nas.AuthenticationResponse{
+		ResStar: resStar,
+	}
+	
+	return h.rrcTask.Send(runtime.Message{
+		Type:    "nas_to_rrc",
+		Payload: resp.Encode().Data(),
+	})
 }
 
 func (h *NasTaskHandler) OnStop(ctx context.Context) error {

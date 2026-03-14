@@ -40,7 +40,7 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 	rlsHandler.SetRrcTask(rrcTask)
 
 	// 3. Setup NAS Task
-	nasHandler := NewNasTaskHandler(nasLogger, cfg.SUPI, cfg.MCC, cfg.MNC, rrcTask)
+	nasHandler := NewNasTaskHandler(nasLogger, cfg, rrcTask)
 	nasTask := runtime.NewTask("ue-nas", nasLogger, nasHandler, 64)
 	
 	rrcHandler.SetNasTask(nasTask)

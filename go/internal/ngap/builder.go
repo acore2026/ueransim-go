@@ -158,6 +158,75 @@ func BuildInitialUEMessage(ranUeNgapID int64, nasPdu []byte, userLocationRefer *
 	return pdu, nil
 }
 
+func BuildUplinkNASTransport(ranUeNgapID int64, amfUeNgapID int64, nasPdu []byte) (*ngapType.NGAPPDU, error) {
+	pdu := &ngapType.NGAPPDU{
+		Present: ngapType.NGAPPDUPresentInitiatingMessage,
+		InitiatingMessage: &ngapType.InitiatingMessage{
+			ProcedureCode: ngapType.ProcedureCode{Value: ngapType.ProcedureCodeUplinkNASTransport},
+			Criticality:   ngapType.Criticality{Value: ngapType.CriticalityPresentIgnore},
+			Value: ngapType.InitiatingMessageValue{
+				Present: ngapType.InitiatingMessagePresentUplinkNASTransport,
+				UplinkNASTransport: &ngapType.UplinkNASTransport{
+					ProtocolIEs: ngapType.ProtocolIEContainerUplinkNASTransportIEs{
+						List: []ngapType.UplinkNASTransportIEs{
+							{
+								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDAMFUENGAPID},
+								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentReject},
+								Value: ngapType.UplinkNASTransportIEsValue{
+									Present:     ngapType.UplinkNASTransportIEsPresentAMFUENGAPID,
+									AMFUENGAPID: &ngapType.AMFUENGAPID{Value: amfUeNgapID},
+								},
+							},
+							{
+								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDRANUENGAPID},
+								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentReject},
+								Value: ngapType.UplinkNASTransportIEsValue{
+									Present:     ngapType.UplinkNASTransportIEsPresentRANUENGAPID,
+									RANUENGAPID: &ngapType.RANUENGAPID{Value: ranUeNgapID},
+								},
+							},
+							{
+								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDNASPDU},
+								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentReject},
+								Value: ngapType.UplinkNASTransportIEsValue{
+									Present: ngapType.UplinkNASTransportIEsPresentNASPDU,
+									NASPDU:  &ngapType.NASPDU{Value: aper.OctetString(nasPdu)},
+								},
+							},
+							{
+								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDUserLocationInformation},
+								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentIgnore},
+								Value: ngapType.UplinkNASTransportIEsValue{
+									Present: ngapType.UplinkNASTransportIEsPresentUserLocationInformation,
+									UserLocationInformation: &ngapType.UserLocationInformation{
+										Present: ngapType.UserLocationInformationPresentUserLocationInformationNR,
+										UserLocationInformationNR: &ngapType.UserLocationInformationNR{
+											NRCGI: ngapType.NRCGI{
+												PLMNIdentity: ngapType.PLMNIdentity{Value: aper.OctetString([]byte{0x02, 0xf8, 0x39})},
+												NRCellIdentity: ngapType.NRCellIdentity{
+													Value: aper.BitString{
+														Bytes:     []byte{0x00, 0x00, 0x00, 0x00, 0x10},
+														BitLength: 36,
+													},
+												},
+											},
+											TAI: ngapType.TAI{
+												PLMNIdentity: ngapType.PLMNIdentity{Value: aper.OctetString([]byte{0x02, 0xf8, 0x39})},
+												TAC:          ngapType.TAC{Value: aper.OctetString([]byte{0x00, 0x00, 0x01})},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	return pdu, nil
+}
+
 func Encode(pdu *ngapType.NGAPPDU) ([]byte, error) {
 	return ngap.Encoder(*pdu)
 }

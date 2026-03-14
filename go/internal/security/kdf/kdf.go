@@ -32,7 +32,28 @@ func KDFBytes(key []byte, fc byte, p [][]byte, l []int) []byte {
 	return h.Sum(nil)
 }
 
-// DeriveKamf derives Kamf from Kseaf (TS 33.501)
+// DeriveResStar derives RES* from CK, IK (TS 33.501, Annex A.4)
+func DeriveResStar(ck, ik []byte, rand, res []byte, snName string) []byte {
+	// Key is concatenation of CK and IK
+	key := append(ck, ik...)
+	
+	p := [][]byte{
+		[]byte(snName),
+		rand,
+		res,
+	}
+	l := []int{
+		len(snName),
+		len(rand),
+		len(res),
+	}
+	
+	// FC = 0x6B
+	k := KDFBytes(key, 0x6B, p, l)
+	
+	// Return the last 16 bytes
+	return k[16:]
+}
 func DeriveKamf(kSeaf []byte, supi string, abba []byte) []byte {
 	p := [][]byte{[]byte(supi), abba}
 	l := []int{len(supi), len(abba)}
