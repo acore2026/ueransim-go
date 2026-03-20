@@ -1,4 +1,4 @@
-# Verifying Happy-Path Registration And Initial PDU Session
+# Verifying Happy-Path Registration, Bearer Setup, And Basic User Plane
 
 This guide explains how to verify the supported Go happy path using `nr-gnb` and `nr-ue` against the live network functions already running on the machine.
 
@@ -7,7 +7,9 @@ Current verified boundary:
 - The UE sends `Registration Complete`.
 - The UE sends `PDU Session Establishment Request`.
 - The UE receives `PDU Session Establishment Accept`.
-- Full user-plane readiness is not yet complete, so this guide stops at session-accept signaling rather than IP traffic verification.
+- The gNB sends `InitialContextSetupResponse` with the RAN-side tunnel information for the supported session.
+- The UE configures `uesimtun0` with the assigned session address from `PDU Session Establishment Accept`.
+- UE-originated packets are encapsulated by the Go gNB into GTP-U and sent toward the UPF.
 
 ## Prerequisites
 
@@ -81,6 +83,7 @@ The UE should show the supported handwritten state progression:
 - `sending Registration Complete`
 - `sending PDU Session Establishment Request`
 - `PDU Session Establishment Accept received`
+- `configuring TUN device`
 - It is also expected to receive `Configuration Update Command` from AMF in this phase. The current Go UE does not yet complete the full follow-up behavior for that command.
 
 ### 5G Core Logs
@@ -104,7 +107,9 @@ docker logs smf --tail 20
 5.  **Registration Completion**: UE logs show `Registration Accept received` followed by `sending Registration Complete`.
 6.  **PDU Session Trigger**: UE logs show `sending PDU Session Establishment Request`.
 7.  **PDU Session Result**: UE logs show `PDU Session Establishment Accept received`.
-8.  **Expected current limit**: No user-plane traffic check is expected to pass yet, because the bearer/context setup work is not finished.
+8.  **Bearer completion**: gNB logs show `sent InitialContextSetupResponse`.
+9.  **Tunnel configuration**: `ip addr show dev uesimtun0` shows the UE-assigned IPv4 address from the session accept.
+10. **Basic user-plane traffic**: gNB logs show `sent uplink GTP-U packet` after traffic is generated through `uesimtun0`.
 
 ## 5. Trigger Initial Registration Manually
 
@@ -152,6 +157,39 @@ docker logs amf --tail 60
 docker logs smf --tail 60
 ```
 
+## 6. Verify Basic User Plane
+
+After `PDU Session Establishment Accept`, confirm the UE TUN interface is up:
+
+```bash
+ip addr show dev uesimtun0
+```
+
+You should see the assigned IPv4 address from the session accept, for example `10.60.0.3/24`.
+
+Then force one packet through the tunnel:
+
+```bash
+ping -I uesimtun0 -c 1 -W 1 8.8.8.8
+```
+
+That ping may or may not receive a reply depending on the DN/NAT setup in the lab, but it should still produce an uplink packet through the supported path. The acceptance signal for this change is that the Go gNB logs:
+
+- `sent InitialContextSetupResponse`
+- `sent uplink GTP-U packet`
+
+If you want extra confirmation from the core side, check SMF logs for the accepted RAN-side bearer info:
+
+```bash
+docker logs smf --tail 80
+```
+
+The expected milestone is a line similar to:
+
+```text
+NGAP setup response DL TNL from gNB: ranAddr=[10 100 200 1] ranTeid=1 pduSessionId=1
+```
+
 ## Troubleshooting
 
 - **NF containers missing**: Run `docker ps` and ensure AMF, SMF, and UPF are up before starting the Go components.
@@ -160,4 +198,7 @@ docker logs smf --tail 60
 - **Registration Rejection**: Check AMF logs for `UESecurityCapability is nil`, identity errors, or NAS security failures.
 - **Identity failure**: If AMF rejects PEI/IMEI, check the configured IMEI value and its checksum handling in `config/free5gc-ue-go.yaml`.
 - **No PDU session result**: Check SMF logs and UE logs to see whether the UL NAS Transport was accepted and whether a DL NAS Transport carrying the session response was returned.
-- **No user-plane traffic**: That is currently expected. Session signaling reaches accept, but bearer/context completion is still pending.
+- **No `uesimtun0` address**: Check whether `PDU Session Establishment Accept` was received and whether the UE logs show `configuring TUN device`.
+- **No `InitialContextSetupResponse`**: Check gNB logs for NGAP parsing failures around `InitialContextSetupRequest`.
+- **No uplink GTP-U packet logs**: Generate traffic with `ping -I uesimtun0 ...` and confirm the UE session was marked ready after session accept.
+- **No ping reply**: This can still be acceptable for the supported slice if `uesimtun0` is configured, SMF accepts the RAN-side bearer response, and gNB logs show uplink GTP-U forwarding. Full internet or DN reachability is outside the current acceptance boundary.

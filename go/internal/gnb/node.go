@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/acore2026/ueransim-go/internal/config"
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/gnb/tasks"
+	"github.com/acore2026/ueransim-go/internal/gnbctx"
 	"github.com/acore2026/ueransim-go/internal/ngap"
 	"github.com/acore2026/ueransim-go/internal/utils"
 )
@@ -37,12 +37,16 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	// 2. RLS Task
 	rlsLogger := logger.With("subsystem", "rls")
 	rlsAddr := fmt.Sprintf("%s:%d", cfg.LinkIP, 38412)
-	rlsHandler := NewRlsTaskHandler(rlsLogger, rlsAddr, ngapTask)
-	rlsTask := runtime.NewTask("gnb-rls", rlsLogger, rlsHandler, 64)
+	sessionStore := gnbctx.NewSessionStore()
+	rlsTask := runtime.NewTask("gnb-rls", rlsLogger, nil, 64)
 
-	// Create remaining tasks
 	gtpLogger := logger.With("subsystem", "gtp")
-	gtpTask := runtime.NewTask("gnb-gtp", gtpLogger, newHeartbeatHandler(gtpLogger, "gnb-gtp"), 16)
+	gtpAddr := fmt.Sprintf("%s:%d", cfg.GTPIP, gnbctx.GTPUPort)
+	gtpHandler := tasks.NewGnbGtpTaskHandler(gtpLogger, gtpAddr, sessionStore, rlsTask)
+	gtpTask := runtime.NewTask("gnb-gtp", gtpLogger, gtpHandler, 64)
+
+	rlsHandler := NewRlsTaskHandler(rlsLogger, rlsAddr, ngapTask, gtpTask)
+	rlsTask.SetHandler(rlsHandler)
 
 	// Now create handlers with task pointers
 	amfAddr := "127.0.0.1"
@@ -55,7 +59,7 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	tac := []byte{byte(cfg.TAC >> 16), byte(cfg.TAC >> 8), byte(cfg.TAC)}
 	nrCellID := buildNrCellIdentity(cfg.NCI)
 	uli := ngap.BuildUserLocationInformationNR(plmnId, tac, nrCellID)
-	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, uli, sctpTask, rlsTask)
+	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, uli, cfg.GTPIP, sctpTask, rlsTask, sessionStore)
 	sctpHandler := tasks.NewGnbSctpTaskHandler(sctpLogger, amfAddr, amfPort, ngapTask)
 	// Set handlers
 	ngapTask.SetHandler(ngapHandler)
@@ -93,37 +97,4 @@ func (n *Node) Run(ctx context.Context) error {
 		"mnc", n.cfg.MNC,
 	)
 	return n.group.Run(ctx)
-}
-
-type heartbeatHandler struct {
-	name   string
-	logger logging.Logger
-	tick   runtime.PeriodicTask
-}
-
-func newHeartbeatHandler(logger logging.Logger, name string) *heartbeatHandler {
-	return &heartbeatHandler{
-		name:   name,
-		logger: logger,
-		tick:   runtime.NewPeriodicTask(10*time.Second, logger),
-	}
-}
-
-func (h *heartbeatHandler) OnStart(ctx context.Context, task *runtime.Task) error {
-	h.tick.Start(ctx, task)
-	h.logger.Info("initialized")
-	return nil
-}
-
-func (h *heartbeatHandler) OnMessage(_ context.Context, msg runtime.Message) error {
-	if msg.Type == runtime.MessageTypeTick {
-		h.logger.Info("heartbeat", "task", h.name)
-		return nil
-	}
-	return nil
-}
-
-func (h *heartbeatHandler) OnStop(context.Context) error {
-	h.logger.Info("shutdown complete")
-	return nil
 }

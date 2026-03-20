@@ -14,6 +14,7 @@ import (
 	"github.com/acore2026/ueransim-go/internal/security/kdf"
 	"github.com/acore2026/ueransim-go/internal/security/milenage"
 	secnas "github.com/acore2026/ueransim-go/internal/security/nas"
+	"github.com/acore2026/ueransim-go/internal/ue/tun"
 )
 
 type NasState int
@@ -32,16 +33,17 @@ const (
 // Registration Complete -> UL NAS Transport(PDU Session Establishment Request) ->
 // DL NAS Transport(PDU Session Establishment Accept).
 type NasTaskHandler struct {
-	logger logging.Logger
-	supi   string
-	supiID string
-	imei   string
-	imeisv string
-	mcc    string
-	mnc    string
-	key    []byte
-	opc    []byte
-	amf    string
+	logger     logging.Logger
+	supi       string
+	supiID     string
+	imei       string
+	imeisv     string
+	mcc        string
+	mnc        string
+	key        []byte
+	opc        []byte
+	amf        string
+	tunNetmask string
 
 	state        NasState
 	sec          *secnas.SecurityContext
@@ -51,9 +53,11 @@ type NasTaskHandler struct {
 	pduRequested bool
 
 	rrcTask *runtime.Task
+	rlsTask *runtime.Task
+	tunTask *runtime.Task
 }
 
-func NewNasTaskHandler(logger logging.Logger, cfg *config.UEConfig, rrcTask *runtime.Task) *NasTaskHandler {
+func NewNasTaskHandler(logger logging.Logger, cfg *config.UEConfig, rrcTask *runtime.Task, rlsTask *runtime.Task, tunTask *runtime.Task) *NasTaskHandler {
 	key, _ := hex.DecodeString(cfg.Key)
 	opc, _ := hex.DecodeString(cfg.OP)
 	if cfg.OPType == "OP" {
@@ -71,11 +75,14 @@ func NewNasTaskHandler(logger logging.Logger, cfg *config.UEConfig, rrcTask *run
 		key:        key,
 		opc:        opc,
 		amf:        cfg.AMF,
+		tunNetmask: cfg.TUNNetmask,
 		state:      StateDeregistered,
 		session:    firstSession(cfg.Sessions),
 		sessionID:  1,
 		sessionPTI: 1,
 		rrcTask:    rrcTask,
+		rlsTask:    rlsTask,
+		tunTask:    tunTask,
 	}
 }
 
@@ -336,7 +343,27 @@ func (h *NasTaskHandler) handleDlNasTransport(data []byte) error {
 			return err
 		}
 		h.state = StateSessionReady
-		h.logger.Info("PDU Session Establishment Accept received", "psi", accept.PduSessionID, "pti", accept.Pti)
+		h.logger.Info("PDU Session Establishment Accept received", "psi", accept.PduSessionID, "pti", accept.Pti, "ip", accept.PDUAddress)
+		if h.tunTask != nil && accept.PDUAddress != "" {
+			if err := h.tunTask.Send(runtime.Message{
+				Type: tun.MessageTypeConfigure,
+				Payload: tun.ConfigureMessage{
+					IPAddress: accept.PDUAddress,
+					Netmask:   h.sessionNetmask(),
+					Route:     true,
+				},
+			}); err != nil {
+				return err
+			}
+		}
+		if h.rlsTask != nil {
+			if err := h.rlsTask.Send(runtime.Message{
+				Type:    "nas_session_ready",
+				Payload: accept.PduSessionID,
+			}); err != nil {
+				return err
+			}
+		}
 	case nas.MsgTypePduSessionEstablishmentReject:
 		h.logger.Error("PDU Session Establishment Reject received")
 	default:
@@ -455,4 +482,11 @@ func imeiCheckDigit(base string) byte {
 		sum += d
 	}
 	return byte((10 - (sum % 10)) % 10)
+}
+
+func (h *NasTaskHandler) sessionNetmask() string {
+	if h.tunNetmask == "" {
+		return "255.255.255.0"
+	}
+	return h.tunNetmask
 }

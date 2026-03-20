@@ -12,6 +12,8 @@ require (
 )
 
 require (
+	github.com/free5gc/openapi v1.2.3 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/tim-ywliu/nested-logrus-formatter v1.3.2 // indirect

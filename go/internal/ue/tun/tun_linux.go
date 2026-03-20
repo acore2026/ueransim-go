@@ -69,11 +69,11 @@ func (d *Device) Name() string {
 }
 
 func (d *Device) Read(p []byte) (n int, err error) {
-	return d.file.Read(p)
+	return syscall.Read(int(d.file.Fd()), p)
 }
 
 func (d *Device) Write(p []byte) (n int, err error) {
-	return d.file.Write(p)
+	return syscall.Write(int(d.file.Fd()), p)
 }
 
 func (d *Device) Close() error {
@@ -88,12 +88,12 @@ func (d *Device) Configure(ipAddr, netmask string, mtu int, configureRoute bool)
 	// but the `ip` command accepts CIDR notation. Let's just use `ip addr add IP/MASK dev NAME`.
 	// For a quick fix, let's assume ipAddr includes the CIDR or we just set it up.
 	// Actually `ipconfig` allows setting mask directly via broadcast/etc but `ip addr` is standard.
-	
+
 	// Set MTU
 	if err := runCmd("ip", "link", "set", "dev", d.name, "mtu", fmt.Sprintf("%d", mtu)); err != nil {
 		return fmt.Errorf("failed to set MTU: %w", err)
 	}
-	
+
 	// Set IP and Netmask (simplification: if netmask is not in CIDR, we should convert it,
 	// but ip addr add accepts IP peer IP or just setting the address and bringing it up).
 	// Let's just use ifconfig for exact match with C++ behavior or ip addr.
@@ -151,11 +151,11 @@ func setupRouting(ifName, ipAddr, tableName string) error {
 	// For production, this requires parsing the file cleanly.
 	// As a fast approach for testing the rewrite:
 	_ = runCmd("sh", "-c", fmt.Sprintf("grep -q %s /etc/iproute2/rt_tables || echo '200 %s' >> /etc/iproute2/rt_tables", tableName, tableName))
-	
+
 	_ = runCmd("ip", "rule", "del", "from", ipAddr, "lookup", tableName)
 	_ = runCmd("ip", "rule", "add", "from", ipAddr, "table", tableName)
 	_ = runCmd("ip", "route", "del", "default", "dev", ifName, "table", tableName)
 	_ = runCmd("ip", "route", "add", "default", "dev", ifName, "table", tableName)
-	
+
 	return nil
 }

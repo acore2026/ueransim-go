@@ -5,35 +5,40 @@ import (
 
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
+	"github.com/acore2026/ueransim-go/internal/gnbctx"
 	"github.com/acore2026/ueransim-go/internal/lib/sctp"
 	"github.com/acore2026/ueransim-go/internal/ngap"
 	"github.com/free5gc/ngap/ngapType"
 )
 
 type GnbNgapTaskHandler struct {
-	logger   logging.Logger
-	gnbName  string
-	gnbId    []byte
-	plmnId   []byte
-	uli      *ngapType.UserLocationInformation
-	sctpTask *runtime.Task
-	rlsTask  *runtime.Task
+	logger       logging.Logger
+	gnbName      string
+	gnbId        []byte
+	plmnId       []byte
+	uli          *ngapType.UserLocationInformation
+	localGTPIP   string
+	sctpTask     *runtime.Task
+	rlsTask      *runtime.Task
+	sessionStore *gnbctx.SessionStore
 
 	// For testing, track if we already sent InitialUEMessage
 	initialSent bool
 	amfUeId     int64
 }
 
-func NewGnbNgapTaskHandler(logger logging.Logger, gnbName string, gnbId []byte, plmnId []byte, uli *ngapType.UserLocationInformation, sctpTask *runtime.Task, rlsTask *runtime.Task) *GnbNgapTaskHandler {
+func NewGnbNgapTaskHandler(logger logging.Logger, gnbName string, gnbId []byte, plmnId []byte, uli *ngapType.UserLocationInformation, localGTPIP string, sctpTask *runtime.Task, rlsTask *runtime.Task, sessionStore *gnbctx.SessionStore) *GnbNgapTaskHandler {
 	return &GnbNgapTaskHandler{
-		logger:      logger.With("component", "ngap"),
-		gnbName:     gnbName,
-		gnbId:       gnbId,
-		plmnId:      plmnId,
-		uli:         uli,
-		sctpTask:    sctpTask,
-		rlsTask:     rlsTask,
-		initialSent: false,
+		logger:       logger.With("component", "ngap"),
+		gnbName:      gnbName,
+		gnbId:        gnbId,
+		plmnId:       plmnId,
+		uli:          uli,
+		localGTPIP:   localGTPIP,
+		sctpTask:     sctpTask,
+		rlsTask:      rlsTask,
+		sessionStore: sessionStore,
+		initialSent:  false,
 	}
 }
 
@@ -107,18 +112,49 @@ func (h *GnbNgapTaskHandler) OnMessage(ctx context.Context, msg runtime.Message)
 			return nil
 		}
 
-		// Update AMF UE ID if present
-		if pdu.Present == ngapType.NGAPPDUPresentInitiatingMessage {
-			ini := pdu.InitiatingMessage
-			if ini.ProcedureCode.Value == ngapType.ProcedureCodeDownlinkNASTransport {
-				down := ini.Value.DownlinkNASTransport
-				for _, ie := range down.ProtocolIEs.List {
-					if ie.Id.Value == ngapType.ProtocolIEIDAMFUENGAPID {
-						h.amfUeId = ie.Value.AMFUENGAPID.Value
-						h.logger.Info("updated AMF UE NGAP ID", "id", h.amfUeId)
-					}
-				}
+		h.captureAmfUeID(pdu)
+
+		if ctxData, err := ngap.ParseInitialContextSetupRequest(pdu); err != nil {
+			h.logger.Error("failed to parse InitialContextSetupRequest", "error", err)
+			return nil
+		} else if ctxData != nil {
+			h.amfUeId = ctxData.AMFUENGAPID
+			responses := make([]ngap.SessionResourceSetupResponse, 0, len(ctxData.Sessions))
+			for _, session := range ctxData.Sessions {
+				record := h.sessionStore.Upsert(gnbctx.SessionSetupRequest{
+					RANUENGAPID: ctxData.RANUENGAPID,
+					AMFUENGAPID: ctxData.AMFUENGAPID,
+					SessionID:   session.PDUSessionID,
+					RemoteIP:    session.RemoteGTPIP,
+					RemoteTEID:  session.RemoteTEID,
+					QFIs:        session.QFIs,
+				}, h.localGTPIP)
+				responses = append(responses, ngap.SessionResourceSetupResponse{
+					PDUSessionID: record.SessionID,
+					LocalGTPIP:   record.LocalIP,
+					LocalTEID:    record.LocalTEID,
+					QFIs:         record.QFIs,
+				})
 			}
+			responsePDU, err := ngap.BuildInitialContextSetupResponse(ctxData.AMFUENGAPID, ctxData.RANUENGAPID, responses)
+			if err != nil {
+				return err
+			}
+			encoded, err := ngap.Encode(responsePDU)
+			if err != nil {
+				return err
+			}
+			if err := h.sctpTask.Send(runtime.Message{
+				Type: "ngap_to_sctp",
+				Payload: sctp.SendMessage{
+					Stream: 0,
+					Ppid:   60,
+					Data:   encoded,
+				},
+			}); err != nil {
+				return err
+			}
+			h.logger.Info("sent InitialContextSetupResponse", "sessions", len(responses))
 		}
 
 		nasPdu := ngap.GetNasPdu(pdu)
@@ -131,6 +167,31 @@ func (h *GnbNgapTaskHandler) OnMessage(ctx context.Context, msg runtime.Message)
 		}
 	}
 	return nil
+}
+
+func (h *GnbNgapTaskHandler) captureAmfUeID(pdu *ngapType.NGAPPDU) {
+	if pdu.Present != ngapType.NGAPPDUPresentInitiatingMessage {
+		return
+	}
+	ini := pdu.InitiatingMessage
+	switch ini.ProcedureCode.Value {
+	case ngapType.ProcedureCodeDownlinkNASTransport:
+		down := ini.Value.DownlinkNASTransport
+		for _, ie := range down.ProtocolIEs.List {
+			if ie.Id.Value == ngapType.ProtocolIEIDAMFUENGAPID {
+				h.amfUeId = ie.Value.AMFUENGAPID.Value
+				h.logger.Info("updated AMF UE NGAP ID", "id", h.amfUeId)
+			}
+		}
+	case ngapType.ProcedureCodeInitialContextSetup:
+		req := ini.Value.InitialContextSetupRequest
+		for _, ie := range req.ProtocolIEs.List {
+			if ie.Id.Value == ngapType.ProtocolIEIDAMFUENGAPID {
+				h.amfUeId = ie.Value.AMFUENGAPID.Value
+				h.logger.Info("updated AMF UE NGAP ID", "id", h.amfUeId)
+			}
+		}
+	}
 }
 
 func (h *GnbNgapTaskHandler) OnStop(ctx context.Context) error {

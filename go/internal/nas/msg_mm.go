@@ -6,6 +6,7 @@ import (
 	extmsg "github.com/acore2026/nas/nasMessage"
 	exttype "github.com/acore2026/nas/nasType"
 	"github.com/acore2026/ueransim-go/internal/utils"
+	"net"
 )
 
 // RegistrationRequest message
@@ -326,6 +327,7 @@ func (m *PduSessionEstablishmentRequest) Encode() *utils.Buffer {
 type PduSessionEstablishmentAccept struct {
 	PduSessionID byte
 	Pti          byte
+	PDUAddress   string
 }
 
 func DecodePduSessionEstablishmentAccept(data []byte) (*PduSessionEstablishmentAccept, error) {
@@ -338,10 +340,15 @@ func DecodePduSessionEstablishmentAccept(data []byte) (*PduSessionEstablishmentA
 		return nil, fmt.Errorf("not a PDU Session Establishment Accept")
 	}
 	src := msg.GsmMessage.PDUSessionEstablishmentAccept
-	return &PduSessionEstablishmentAccept{
+	res := &PduSessionEstablishmentAccept{
 		PduSessionID: src.PDUSessionID.GetPDUSessionID(),
 		Pti:          src.PTI.GetPTI(),
-	}, nil
+	}
+	if src.PDUAddress != nil && src.PDUAddress.GetLen() >= 5 && src.PDUAddress.GetPDUSessionTypeValue() == 1 {
+		info := src.PDUAddress.GetPDUAddressInformation()
+		res.PDUAddress = net.IPv4(info[0], info[1], info[2], info[3]).String()
+	}
+	return res, nil
 }
 
 func boolToUint8(v bool) uint8 {

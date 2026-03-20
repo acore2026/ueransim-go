@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	MessageTypeAppToTun runtime.MessageType = "app_to_tun"
-	MessageTypeTunToApp runtime.MessageType = "tun_to_app"
-	MessageTypeTunError runtime.MessageType = "tun_error"
+	MessageTypeAppToTun  runtime.MessageType = "app_to_tun"
+	MessageTypeTunToApp  runtime.MessageType = "tun_to_app"
+	MessageTypeTunError  runtime.MessageType = "tun_error"
+	MessageTypeConfigure runtime.MessageType = "configure_tun"
 )
 
 type AppToTunMessage struct {
@@ -30,6 +31,12 @@ type TunErrorMessage struct {
 	Error string
 }
 
+type ConfigureMessage struct {
+	IPAddress string
+	Netmask   string
+	Route     bool
+}
+
 type TaskHandler struct {
 	deviceName string
 	ipAddr     string
@@ -37,11 +44,14 @@ type TaskHandler struct {
 	mtu        int
 	route      bool
 	psi        int
-	
-	targetTask *runtime.Task
-	logger     logging.Logger
-	device     *Device
-	wg         sync.WaitGroup
+
+	targetTask      *runtime.Task
+	logger          logging.Logger
+	device          *Device
+	configured      bool
+	readLoopStarted bool
+	ctx             context.Context
+	wg              sync.WaitGroup
 }
 
 // NewTaskHandler creates a new TaskHandler for the TUN interface.
@@ -59,6 +69,7 @@ func NewTaskHandler(deviceName, ipAddr, netmask string, mtu int, route bool, psi
 }
 
 func (h *TaskHandler) OnStart(ctx context.Context, t *runtime.Task) error {
+	h.ctx = ctx
 	h.logger.Info("allocating TUN device", "prefix", h.deviceName)
 	dev, err := Allocate(h.deviceName)
 	if err != nil {
@@ -67,21 +78,19 @@ func (h *TaskHandler) OnStart(ctx context.Context, t *runtime.Task) error {
 	h.device = dev
 	h.logger.Info("TUN allocated", "name", dev.Name())
 
-	h.logger.Info("configuring TUN device")
-	if err := h.device.Configure(h.ipAddr, h.netmask, h.mtu, h.route); err != nil {
-		h.device.Close()
-		return fmt.Errorf("failed to configure TUN: %w", err)
+	if h.ipAddr != "" {
+		if err := h.configure(); err != nil {
+			h.device.Close()
+			return err
+		}
 	}
-
-	h.wg.Add(1)
-	go h.readLoop(ctx)
 
 	return nil
 }
 
 func (h *TaskHandler) readLoop(ctx context.Context) {
 	defer h.wg.Done()
-	
+
 	buffer := make([]byte, 8000)
 	for {
 		select {
@@ -100,7 +109,7 @@ func (h *TaskHandler) readLoop(ctx context.Context) {
 			if n > 0 {
 				dataCopy := make([]byte, n)
 				copy(dataCopy, buffer[:n])
-				
+
 				msg := runtime.Message{
 					Type: MessageTypeTunToApp,
 					Payload: TunToAppMessage{
@@ -123,7 +132,7 @@ func (h *TaskHandler) OnMessage(ctx context.Context, msg runtime.Message) error 
 		if !ok {
 			return errors.New("invalid payload for MessageTypeAppToTun")
 		}
-		
+
 		n, err := h.device.Write(payload.Data)
 		if err != nil {
 			h.logger.Error("TUN write failed", "error", err)
@@ -131,6 +140,17 @@ func (h *TaskHandler) OnMessage(ctx context.Context, msg runtime.Message) error 
 		} else if n != len(payload.Data) {
 			h.logger.Error("TUN write partial")
 			h.sendError("TUN device partially written")
+		}
+	case MessageTypeConfigure:
+		payload, ok := msg.Payload.(ConfigureMessage)
+		if !ok {
+			return errors.New("invalid payload for MessageTypeConfigure")
+		}
+		h.ipAddr = payload.IPAddress
+		h.netmask = payload.Netmask
+		h.route = payload.Route
+		if err := h.configure(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -155,4 +175,21 @@ func (h *TaskHandler) sendError(errStr string) {
 			Error: errStr,
 		},
 	})
+}
+
+func (h *TaskHandler) configure() error {
+	if h.configured {
+		return nil
+	}
+	h.logger.Info("configuring TUN device", "ip", h.ipAddr)
+	if err := h.device.Configure(h.ipAddr, h.netmask, h.mtu, h.route); err != nil {
+		return fmt.Errorf("failed to configure TUN: %w", err)
+	}
+	h.configured = true
+	if !h.readLoopStarted {
+		h.wg.Add(1)
+		h.readLoopStarted = true
+		go h.readLoop(h.ctx)
+	}
+	return nil
 }
