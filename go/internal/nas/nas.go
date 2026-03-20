@@ -14,22 +14,29 @@ const (
 type SecurityHeaderType byte
 
 const (
-	SecurityHeaderTypePlainNas                                  SecurityHeaderType = 0
-	SecurityHeaderTypeIntegrityProtected                        SecurityHeaderType = 1
-	SecurityHeaderTypeIntegrityProtectedAndCiphered             SecurityHeaderType = 2
-	SecurityHeaderTypeIntegrityProtectedWithNewSecurityContext  SecurityHeaderType = 3
+	SecurityHeaderTypePlainNas                                            SecurityHeaderType = 0
+	SecurityHeaderTypeIntegrityProtected                                  SecurityHeaderType = 1
+	SecurityHeaderTypeIntegrityProtectedAndCiphered                       SecurityHeaderType = 2
+	SecurityHeaderTypeIntegrityProtectedWithNewSecurityContext            SecurityHeaderType = 3
 	SecurityHeaderTypeIntegrityProtectedAndCipheredWithNewSecurityContext SecurityHeaderType = 4
 )
 
 // MessageType values (simplified for start)
 const (
-	MsgTypeRegistrationRequest      byte = 0x41
-	MsgTypeRegistrationAccept       byte = 0x42
-	MsgTypeRegistrationComplete     byte = 0x43
-	MsgTypeAuthenticationRequest     byte = 0x56
-	MsgTypeAuthenticationResponse    byte = 0x57
-	MsgTypeSecurityModeCommand      byte = 0x5D
-	MsgTypeSecurityModeComplete     byte = 0x5E
+	MsgTypeRegistrationRequest            byte = 0x41
+	MsgTypeRegistrationAccept             byte = 0x42
+	MsgTypeRegistrationComplete           byte = 0x43
+	MsgTypeAuthenticationRequest          byte = 0x56
+	MsgTypeAuthenticationResponse         byte = 0x57
+	MsgTypeIdentityRequest                byte = 0x5B
+	MsgTypeIdentityResponse               byte = 0x5C
+	MsgTypeSecurityModeCommand            byte = 0x5D
+	MsgTypeSecurityModeComplete           byte = 0x5E
+	MsgTypeUlNasTransport                 byte = 0x67
+	MsgTypeDlNasTransport                 byte = 0x68
+	MsgTypePduSessionEstablishmentRequest byte = 0xC1
+	MsgTypePduSessionEstablishmentAccept  byte = 0xC2
+	MsgTypePduSessionEstablishmentReject  byte = 0xC3
 )
 
 // IE is the interface for all Information Elements

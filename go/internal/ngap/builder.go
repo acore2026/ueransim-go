@@ -1,9 +1,9 @@
 package ngap
 
 import (
+	"github.com/free5gc/aper"
 	"github.com/free5gc/ngap"
 	"github.com/free5gc/ngap/ngapType"
-	"github.com/free5gc/aper"
 )
 
 func BuildNGSetupRequest(gnbName string, gnbID []byte, bitLength uint64, plmnID []byte) (*ngapType.NGAPPDU, error) {
@@ -158,7 +158,7 @@ func BuildInitialUEMessage(ranUeNgapID int64, nasPdu []byte, userLocationRefer *
 	return pdu, nil
 }
 
-func BuildUplinkNASTransport(ranUeNgapID int64, amfUeNgapID int64, nasPdu []byte) (*ngapType.NGAPPDU, error) {
+func BuildUplinkNASTransport(ranUeNgapID int64, amfUeNgapID int64, nasPdu []byte, userLocation *ngapType.UserLocationInformation) (*ngapType.NGAPPDU, error) {
 	pdu := &ngapType.NGAPPDU{
 		Present: ngapType.NGAPPDUPresentInitiatingMessage,
 		InitiatingMessage: &ngapType.InitiatingMessage{
@@ -197,25 +197,8 @@ func BuildUplinkNASTransport(ranUeNgapID int64, amfUeNgapID int64, nasPdu []byte
 								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDUserLocationInformation},
 								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentIgnore},
 								Value: ngapType.UplinkNASTransportIEsValue{
-									Present: ngapType.UplinkNASTransportIEsPresentUserLocationInformation,
-									UserLocationInformation: &ngapType.UserLocationInformation{
-										Present: ngapType.UserLocationInformationPresentUserLocationInformationNR,
-										UserLocationInformationNR: &ngapType.UserLocationInformationNR{
-											NRCGI: ngapType.NRCGI{
-												PLMNIdentity: ngapType.PLMNIdentity{Value: aper.OctetString([]byte{0x02, 0xf8, 0x39})},
-												NRCellIdentity: ngapType.NRCellIdentity{
-													Value: aper.BitString{
-														Bytes:     []byte{0x00, 0x00, 0x00, 0x00, 0x10},
-														BitLength: 36,
-													},
-												},
-											},
-											TAI: ngapType.TAI{
-												PLMNIdentity: ngapType.PLMNIdentity{Value: aper.OctetString([]byte{0x02, 0xf8, 0x39})},
-												TAC:          ngapType.TAC{Value: aper.OctetString([]byte{0x00, 0x00, 0x01})},
-											},
-										},
-									},
+									Present:                 ngapType.UplinkNASTransportIEsPresentUserLocationInformation,
+									UserLocationInformation: userLocation,
 								},
 							},
 						},
@@ -244,14 +227,27 @@ func GetNasPdu(pdu *ngapType.NGAPPDU) []byte {
 		return nil
 	}
 	ini := pdu.InitiatingMessage
-	if ini.ProcedureCode.Value != ngapType.ProcedureCodeDownlinkNASTransport {
-		return nil
-	}
-	
-	down := ini.Value.DownlinkNASTransport
-	for _, ie := range down.ProtocolIEs.List {
-		if ie.Id.Value == ngapType.ProtocolIEIDNASPDU {
-			return []byte(ie.Value.NASPDU.Value)
+	switch ini.ProcedureCode.Value {
+	case ngapType.ProcedureCodeDownlinkNASTransport:
+		down := ini.Value.DownlinkNASTransport
+		for _, ie := range down.ProtocolIEs.List {
+			if ie.Id.Value == ngapType.ProtocolIEIDNASPDU {
+				return []byte(ie.Value.NASPDU.Value)
+			}
+		}
+	case ngapType.ProcedureCodeInitialContextSetup:
+		req := ini.Value.InitialContextSetupRequest
+		for _, ie := range req.ProtocolIEs.List {
+			switch ie.Id.Value {
+			case ngapType.ProtocolIEIDNASPDU:
+				return []byte(ie.Value.NASPDU.Value)
+			case ngapType.ProtocolIEIDPDUSessionResourceSetupListCxtReq:
+				for _, item := range ie.Value.PDUSessionResourceSetupListCxtReq.List {
+					if item.NASPDU != nil {
+						return []byte(item.NASPDU.Value)
+					}
+				}
+			}
 		}
 	}
 	return nil

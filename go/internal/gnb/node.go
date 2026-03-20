@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/acore2026/ueransim-go/internal/config"
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/gnb/tasks"
+	"github.com/acore2026/ueransim-go/internal/ngap"
 	"github.com/acore2026/ueransim-go/internal/utils"
 )
 
@@ -26,7 +29,7 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	// 3. NGAP Task
 	gnbId, _ := hex.DecodeString(cfg.GNBID)
 	plmnId := utils.EncodePlmn(cfg.MCC, cfg.MNC)
-	
+
 	// Create tasks without handlers first
 	ngapTask := runtime.NewTask("gnb-ngap", ngapLogger, nil, 64)
 	sctpTask := runtime.NewTask("gnb-sctp", sctpLogger, nil, 64)
@@ -49,9 +52,11 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 		amfPort = cfg.AMFConfigs[0].Port
 	}
 
-	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, sctpTask, rlsTask)
+	tac := []byte{byte(cfg.TAC >> 16), byte(cfg.TAC >> 8), byte(cfg.TAC)}
+	nrCellID := buildNrCellIdentity(cfg.NCI)
+	uli := ngap.BuildUserLocationInformationNR(plmnId, tac, nrCellID)
+	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, uli, sctpTask, rlsTask)
 	sctpHandler := tasks.NewGnbSctpTaskHandler(sctpLogger, amfAddr, amfPort, ngapTask)
-
 	// Set handlers
 	ngapTask.SetHandler(ngapHandler)
 	sctpTask.SetHandler(sctpHandler)
@@ -60,6 +65,24 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 		cfg:    cfg,
 		logger: logger,
 		group:  runtime.NewGroup(logger, sctpTask, ngapTask, gtpTask, rlsTask),
+	}
+}
+
+func buildNrCellIdentity(nci string) []byte {
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(nci, "0x"), "0X")
+	if trimmed == "" {
+		return []byte{0x00, 0x00, 0x00, 0x00, 0x10}
+	}
+	value, err := strconv.ParseUint(trimmed, 16, 64)
+	if err != nil {
+		return []byte{0x00, 0x00, 0x00, 0x00, 0x10}
+	}
+	return []byte{
+		byte(value >> 32),
+		byte(value >> 24),
+		byte(value >> 16),
+		byte(value >> 8),
+		byte(value),
 	}
 }
 

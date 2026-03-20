@@ -22,7 +22,7 @@ func KDF(key []byte, fc byte, p [][]byte, l []int) []byte {
 // DeriveResStar derives RES* from CK, IK (TS 33.501, Annex A.4)
 func DeriveResStar(ck, ik []byte, rand, res []byte, snName string) []byte {
 	key := append(ck, ik...)
-	
+
 	p := [][]byte{
 		[]byte(snName),
 		rand,
@@ -33,17 +33,24 @@ func DeriveResStar(ck, ik []byte, rand, res []byte, snName string) []byte {
 		len(rand),
 		len(res),
 	}
-	
+
 	k := KDF(key, 0x6B, p, l)
 	return k[16:]
 }
 
 // DeriveKseaf derives Kseaf from CK, IK (TS 33.501, Annex A.6)
-func DeriveKseaf(ck, ik []byte, snName string) []byte {
+func DeriveKausf(ck, ik []byte, snName string, sqnXorAk []byte) []byte {
 	key := append(ck, ik...)
+	p := [][]byte{[]byte(snName), sqnXorAk}
+	l := []int{len(snName), len(sqnXorAk)}
+	return KDF(key, 0x6A, p, l)
+}
+
+// DeriveKseaf derives Kseaf from Kausf (TS 33.501, Annex A.6)
+func DeriveKseaf(kAusf []byte, snName string) []byte {
 	p := [][]byte{[]byte(snName)}
 	l := []int{len(snName)}
-	return KDF(key, 0x6C, p, l)
+	return KDF(kAusf, 0x6C, p, l)
 }
 
 // DeriveKamf derives Kamf from Kseaf (TS 33.501, Annex A.7)
