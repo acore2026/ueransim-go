@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"hash/crc32"
 	"net"
 	"time"
 
@@ -22,6 +23,14 @@ type GnbGtpTaskHandler struct {
 	sessionStore *gnbctx.SessionStore
 	rlsTask      *runtime.Task
 	conn         *net.UDPConn
+	lastDl       map[uint8]recentDownlink
+}
+
+type recentDownlink struct {
+	teid uint32
+	sum  uint32
+	size int
+	at   time.Time
 }
 
 func NewGnbGtpTaskHandler(logger logging.Logger, listenAddr string, sessionStore *gnbctx.SessionStore, rlsTask *runtime.Task) *GnbGtpTaskHandler {
@@ -30,6 +39,7 @@ func NewGnbGtpTaskHandler(logger logging.Logger, listenAddr string, sessionStore
 		listenAddr:   listenAddr,
 		sessionStore: sessionStore,
 		rlsTask:      rlsTask,
+		lastDl:       make(map[uint8]recentDownlink),
 	}
 }
 
@@ -83,6 +93,10 @@ func (h *GnbGtpTaskHandler) readLoop(ctx context.Context, task *runtime.Task) {
 				h.logger.Info("dropping GTP-U packet for unknown TEID", "teid", msg.Teid)
 				continue
 			}
+			if h.isDuplicateDownlink(session.SessionID, msg.Teid, msg.Payload) {
+				h.logger.Info("dropping duplicate downlink GTP-U packet", "sessionID", session.SessionID, "teid", msg.Teid, "len", len(msg.Payload))
+				continue
+			}
 			h.logger.Info("received downlink GTP-U packet", "sessionID", session.SessionID, "teid", msg.Teid, "len", len(msg.Payload))
 			_ = h.rlsTask.Send(runtime.Message{
 				Type: MessageTypeGtpToRls,
@@ -132,6 +146,25 @@ func firstQFI(qfis []uint8) *uint8 {
 	}
 	qfi := qfis[0]
 	return &qfi
+}
+
+func (h *GnbGtpTaskHandler) isDuplicateDownlink(sessionID uint8, teid uint32, payload []byte) bool {
+	now := time.Now()
+	sum := crc32.ChecksumIEEE(payload)
+	last, ok := h.lastDl[sessionID]
+	h.lastDl[sessionID] = recentDownlink{
+		teid: teid,
+		sum:  sum,
+		size: len(payload),
+		at:   now,
+	}
+	if !ok {
+		return false
+	}
+	if now.Sub(last.at) > 20*time.Millisecond {
+		return false
+	}
+	return last.teid == teid && last.size == len(payload) && last.sum == sum
 }
 
 func (h *GnbGtpTaskHandler) OnStop(ctx context.Context) error {
