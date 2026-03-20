@@ -12,7 +12,7 @@ This subtree contains the Go implementation of UERANSIM, migrated from the origi
     - Linux TUN interface for UE User Plane.
 - **Protocol Codecs:**
     - **NGAP:** Fully supported via free5gc/ngap.
-    - **NAS:** 5GMM/5GSM encoding/decoding foundation (Registration, etc.).
+- **NAS:** 5GMM/5GSM encoding/decoding foundation (Registration, etc.).
     - **RRC:** Initial UPER-compatible bit-packing for connection setup.
     - **GTP-U:** User plane tunneling header implementation.
     - **RLS:** Radio Link Simulation protocol for UDP-based radio.
@@ -22,6 +22,7 @@ This subtree contains the Go implementation of UERANSIM, migrated from the origi
     - 3GPP Key Derivation (KDF).
 - **Nodes:** Functional UE and gNodeB state machines for live registration and initial session-establishment signaling with free5GC.
 - **NAS Transport:** Bidirectional NAS PDU relaying between UE and Core (Uplink/Downlink), including the narrow happy-path PDU session trigger and NAS delivery from `InitialContextSetupRequest`.
+- **NAS Adapter Boundary:** The local `go/internal/nas` package now acts as a stable adapter over `github.com/acore2026/nas` for the supported happy-path messages. UE and gNB procedure code remain handwritten and continue to consume local helper functions and DTOs instead of external NAS package types directly.
 - **Bootstrap:** YAML configuration loading and basic interactive CLI.
 - **Documentation:** Added `go/VERIFY_REGISTRATION.md` for end-to-end testing.
 
@@ -38,3 +39,4 @@ This subtree contains the Go implementation of UERANSIM, migrated from the origi
 - Full C++ parity across registration, RRC, and session-management edge cases.
 - Handover, recovery branches, multi-session orchestration, and parity-only helper layers.
 - Generated procedure logic. The Go rewrite keeps state progression handwritten and uses generated or schema-driven helpers only for repetitive protocol structure handling.
+- Leaking external NAS message or IE types into the UE/gNB procedure layer. Standard NAS structure handling belongs in the local adapter boundary, not in handwritten procedure code.

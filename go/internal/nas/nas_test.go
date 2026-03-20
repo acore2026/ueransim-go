@@ -96,7 +96,7 @@ func TestUlNasTransportEncode(t *testing.T) {
 		Dnn: "internet",
 	}).Encode().Hex()
 
-	expected := "7e00670100042e0101c112010181220401010203250908696e7465726e6574"
+	expected := "7e00670100042e0101c1120181220401010203250908696e7465726e6574"
 	if msg != expected {
 		t.Fatalf("expected %s, got %s", expected, msg)
 	}
@@ -122,7 +122,12 @@ func TestDecodeDlNasTransport(t *testing.T) {
 }
 
 func TestPduSessionEstablishmentAcceptDecode(t *testing.T) {
-	msg, err := DecodePduSessionEstablishmentAccept([]byte{0x2e, 0x01, 0x01, 0xc2})
+	msg, err := DecodePduSessionEstablishmentAccept([]byte{
+		0x2e, 0x01, 0x01, 0xc2,
+		0x11,
+		0x00, 0x04, 0x01, 0x00, 0x00, 0x01,
+		0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	})
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}

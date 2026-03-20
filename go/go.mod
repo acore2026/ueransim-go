@@ -3,6 +3,7 @@ module github.com/acore2026/ueransim-go
 go 1.26.0
 
 require (
+	github.com/acore2026/nas v1.2.3
 	github.com/aead/cmac v0.0.0-20160719120800-7af84192f0b1
 	github.com/free5gc/aper v1.1.0
 	github.com/free5gc/ngap v1.1.2

@@ -2,6 +2,9 @@ package nas
 
 import (
 	"fmt"
+	extnas "github.com/acore2026/nas"
+	extmsg "github.com/acore2026/nas/nasMessage"
+	exttype "github.com/acore2026/nas/nasType"
 	"github.com/acore2026/ueransim-go/internal/utils"
 )
 
@@ -18,36 +21,22 @@ type RegistrationRequest struct {
 }
 
 func (m *RegistrationRequest) Encode() *utils.Buffer {
-	b := utils.NewEmptyBuffer()
-
-	// Protocol Discriminator
-	b.AppendByte(PD_5G_MOBILITY_MANAGEMENT)
-
-	// Security Header Type (0: Plain NAS)
-	b.AppendByte(0x00)
-
-	// Message Type
-	b.AppendByte(MsgTypeRegistrationRequest)
-
-	// Type 1 IEs are combined (Registration Type + NAS Key Set Identifier)
-	// Byte 1: RegType(4 bits) | NasKeySet(4 bits)
-	octet := (m.NasKeySetIdentifier.Encode() << 4) | m.RegistrationType.Encode()
-	b.AppendByte(octet)
-
-	// Mobile Identity (TLV)
-	m.MobileIdentity.Encode(b)
-
-	// Optional IEs would go here with their IEI
-	if m.Capability5GMM != nil {
-		b.AppendByte(0x10)
-		m.Capability5GMM.Encode(b)
+	identity, err := buildMobileIdentity5GS(m.MobileIdentity)
+	if err != nil {
+		panic(err)
 	}
-	if m.UeSecurityCapability != nil {
-		b.AppendByte(0x2E) // IEI for UESecurityCapability
-		m.UeSecurityCapability.Encode(b)
-	}
-
-	return b
+	msg := extmsg.NewRegistrationRequest(extnas.MsgTypeRegistrationRequest)
+	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_MOBILITY_MANAGEMENT)
+	msg.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(extnas.SecurityHeaderTypePlainNas)
+	msg.RegistrationRequestMessageIdentity.SetMessageType(extnas.MsgTypeRegistrationRequest)
+	msg.NgksiAndRegistrationType5GS.SetFOR(boolToUint8(m.RegistrationType.FollowOnRequest))
+	msg.NgksiAndRegistrationType5GS.SetRegistrationType5GS(m.RegistrationType.RegistrationType)
+	msg.NgksiAndRegistrationType5GS.SetNasKeySetIdentifiler(m.NasKeySetIdentifier.KeySetIdentifier)
+	msg.NgksiAndRegistrationType5GS.SetTSC(boolToUint8(m.NasKeySetIdentifier.Tsc))
+	msg.MobileIdentity5GS = *identity
+	msg.Capability5GMM = buildCapability5GMM(m.Capability5GMM)
+	msg.UESecurityCapability = buildUESecurityCapability(m.UeSecurityCapability)
+	return encodeWithBuilder(msg.EncodeRegistrationRequest)
 }
 
 type Capability5GMM struct {
@@ -107,45 +96,22 @@ type AuthenticationRequest struct {
 }
 
 func DecodeAuthenticationRequest(data []byte) (*AuthenticationRequest, error) {
-	if len(data) < 4 {
-		return nil, fmt.Errorf("NAS PDU too short")
+	wire := append([]byte(nil), data...)
+	msg := extnas.NewMessage()
+	if err := msg.PlainNasDecode(&wire); err != nil {
+		return nil, err
 	}
-	if data[2] != MsgTypeAuthenticationRequest {
-		return nil, fmt.Errorf("not an Authentication Request: 0x%02x", data[2])
+	if msg.GmmMessage == nil || msg.GmmMessage.AuthenticationRequest == nil {
+		return nil, fmt.Errorf("not an Authentication Request")
 	}
-
+	src := msg.GmmMessage.AuthenticationRequest
+	if src.AuthenticationParameterRAND == nil || src.AuthenticationParameterAUTN == nil {
+		return nil, fmt.Errorf("authentication request missing RAND/AUTN")
+	}
 	m := &AuthenticationRequest{}
-	m.NasKeySetIdentifier.KeySetIdentifier = data[3] & 0x07
-
-	offset := 4
-	// ABBA (Mandatory, LV)
-	// Based on hex: 02 00 00
-	abbaLen := int(data[offset])
-	offset += 1 + abbaLen
-
-	// RAND (Mandatory, TV, IEI=0x21)
-	if len(data) < offset+17 {
-		return nil, fmt.Errorf("missing RAND at offset %d, total len %d", offset, len(data))
-	}
-	if data[offset] != 0x21 {
-		return nil, fmt.Errorf("invalid RAND IEI: 0x%02x at offset %d", data[offset], offset)
-	}
-	copy(m.Rand[:], data[offset+1:offset+17])
-	offset += 17
-
-	// AUTN (Mandatory, TLV, IEI=0x20)
-	if len(data) < offset+18 {
-		return nil, fmt.Errorf("missing AUTN at offset %d, total len %d", offset, len(data))
-	}
-	if data[offset] != 0x20 {
-		return nil, fmt.Errorf("invalid AUTN IEI: 0x%02x at offset %d", data[offset], offset)
-	}
-	autnLen := int(data[offset+1])
-	if autnLen != 16 {
-		return nil, fmt.Errorf("invalid AUTN length: %d", autnLen)
-	}
-	copy(m.Autn[:], data[offset+2:offset+18])
-
+	m.NasKeySetIdentifier.KeySetIdentifier = src.SpareHalfOctetAndNgksi.GetNasKeySetIdentifiler()
+	copy(m.Rand[:], src.AuthenticationParameterRAND.Octet[:])
+	copy(m.Autn[:], src.AuthenticationParameterAUTN.Octet[:])
 	return m, nil
 }
 
@@ -155,25 +121,23 @@ type AuthenticationResponse struct {
 }
 
 func (m *AuthenticationResponse) Encode() *utils.Buffer {
-	b := utils.NewEmptyBuffer()
-	b.AppendByte(PD_5G_MOBILITY_MANAGEMENT)
-	b.AppendByte(0x00) // Plain NAS
-	b.AppendByte(MsgTypeAuthenticationResponse)
-
-	// Authentication response parameter (TLV, IEI=0x2D)
+	msg := extmsg.NewAuthenticationResponse(extnas.MsgTypeAuthenticationResponse)
+	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_MOBILITY_MANAGEMENT)
+	msg.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(extnas.SecurityHeaderTypePlainNas)
+	msg.AuthenticationResponseMessageIdentity.SetMessageType(extnas.MsgTypeAuthenticationResponse)
 	if len(m.ResStar) > 0 {
-		b.AppendByte(0x2D)
-
+		param := exttype.NewAuthenticationResponseParameter(extmsg.AuthenticationResponseAuthenticationResponseParameterType)
+		param.SetLen(16)
 		resStar := m.ResStar
 		if len(resStar) > 16 {
 			resStar = resStar[len(resStar)-16:]
 		}
-
-		b.AppendByte(byte(len(resStar)))
-		b.AppendBytes(resStar)
+		var arr [16]byte
+		copy(arr[16-len(resStar):], resStar)
+		param.SetRES(arr)
+		msg.AuthenticationResponseParameter = param
 	}
-
-	return b
+	return encodeWithBuilder(msg.EncodeAuthenticationResponse)
 }
 
 type IdentityRequest struct {
@@ -181,14 +145,16 @@ type IdentityRequest struct {
 }
 
 func DecodeIdentityRequest(data []byte) (*IdentityRequest, error) {
-	if len(data) < 4 {
-		return nil, fmt.Errorf("NAS PDU too short")
+	wire := append([]byte(nil), data...)
+	msg := extnas.NewMessage()
+	if err := msg.PlainNasDecode(&wire); err != nil {
+		return nil, err
 	}
-	if data[2] != MsgTypeIdentityRequest {
-		return nil, fmt.Errorf("not an Identity Request: 0x%02x", data[2])
+	if msg.GmmMessage == nil || msg.GmmMessage.IdentityRequest == nil {
+		return nil, fmt.Errorf("not an Identity Request")
 	}
 	return &IdentityRequest{
-		IdentityType: data[3] & 0x07,
+		IdentityType: msg.GmmMessage.IdentityRequest.SpareHalfOctetAndIdentityType.GetTypeOfIdentity(),
 	}, nil
 }
 
@@ -197,12 +163,16 @@ type IdentityResponse struct {
 }
 
 func (m *IdentityResponse) Encode() *utils.Buffer {
-	b := utils.NewEmptyBuffer()
-	b.AppendByte(PD_5G_MOBILITY_MANAGEMENT)
-	b.AppendByte(0x00)
-	b.AppendByte(MsgTypeIdentityResponse)
-	m.MobileIdentity.Encode(b)
-	return b
+	identity, err := buildMobileIdentity(m.MobileIdentity)
+	if err != nil {
+		panic(err)
+	}
+	msg := extmsg.NewIdentityResponse(extnas.MsgTypeIdentityResponse)
+	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_MOBILITY_MANAGEMENT)
+	msg.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(extnas.SecurityHeaderTypePlainNas)
+	msg.IdentityResponseMessageIdentity.SetMessageType(extnas.MsgTypeIdentityResponse)
+	msg.MobileIdentity = *identity
+	return encodeWithBuilder(msg.EncodeIdentityResponse)
 }
 
 // SecurityModeCommand message
@@ -213,22 +183,20 @@ type SecurityModeCommand struct {
 }
 
 func DecodeSecurityModeCommand(data []byte) (*SecurityModeCommand, error) {
-	if len(data) < 6 {
-		return nil, fmt.Errorf("NAS PDU too short")
+	wire := append([]byte(nil), data...)
+	msg := extnas.NewMessage()
+	if err := msg.PlainNasDecode(&wire); err != nil {
+		return nil, err
 	}
-	if data[2] != MsgTypeSecurityModeCommand {
-		return nil, fmt.Errorf("not a Security Mode Command: 0x%02x", data[2])
+	if msg.GmmMessage == nil || msg.GmmMessage.SecurityModeCommand == nil {
+		return nil, fmt.Errorf("not a Security Mode Command")
 	}
-
-	m := &SecurityModeCommand{}
-	// data[3]: Selected NAS security algorithms
-	m.SelectedCipheringAlgorithm = (data[3] >> 4) & 0x07
-	m.SelectedIntegrityAlgorithm = data[3] & 0x07
-
-	// data[4]: bits 4-6 is NasKeySetIdentifier
-	m.NasKeySetIdentifier = (data[4] >> 4) & 0x07
-
-	return m, nil
+	src := msg.GmmMessage.SecurityModeCommand
+	return &SecurityModeCommand{
+		SelectedIntegrityAlgorithm: src.SelectedNASSecurityAlgorithms.GetTypeOfIntegrityProtectionAlgorithm(),
+		SelectedCipheringAlgorithm: src.SelectedNASSecurityAlgorithms.GetTypeOfCipheringAlgorithm(),
+		NasKeySetIdentifier:        src.SpareHalfOctetAndNgksi.GetNasKeySetIdentifiler(),
+	}, nil
 }
 
 // SecurityModeComplete message
@@ -237,26 +205,32 @@ type SecurityModeComplete struct {
 }
 
 func (m *SecurityModeComplete) Encode() *utils.Buffer {
-	b := utils.NewEmptyBuffer()
-	b.AppendByte(PD_5G_MOBILITY_MANAGEMENT)
-	b.AppendByte(0x00) // Will be updated by security layer
-	b.AppendByte(MsgTypeSecurityModeComplete)
-
-	// Mobile Identity (Mandatory, TLV)
-	m.MobileIdentity.Encode(b)
-
-	return b
+	msg := extmsg.NewSecurityModeComplete(extnas.MsgTypeSecurityModeComplete)
+	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_MOBILITY_MANAGEMENT)
+	msg.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(extnas.SecurityHeaderTypePlainNas)
+	msg.SecurityModeCompleteMessageIdentity.SetMessageType(extnas.MsgTypeSecurityModeComplete)
+	if m.MobileIdentity.Type == MobileIdentityTypeImeisv {
+		payload, err := buildMobileIdentityPayload(m.MobileIdentity)
+		if err != nil {
+			panic(err)
+		}
+		imeisv := exttype.NewIMEISV(extmsg.SecurityModeCompleteIMEISVType)
+		imeisv.SetLen(uint16(len(payload)))
+		copy(imeisv.Octet[:], payload)
+		msg.IMEISV = imeisv
+	}
+	return encodeWithBuilder(msg.EncodeSecurityModeComplete)
 }
 
 // RegistrationComplete message
 type RegistrationComplete struct{}
 
 func (m *RegistrationComplete) Encode() *utils.Buffer {
-	b := utils.NewEmptyBuffer()
-	b.AppendByte(PD_5G_MOBILITY_MANAGEMENT)
-	b.AppendByte(0x00)
-	b.AppendByte(MsgTypeRegistrationComplete)
-	return b
+	msg := extmsg.NewRegistrationComplete(extnas.MsgTypeRegistrationComplete)
+	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_MOBILITY_MANAGEMENT)
+	msg.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(extnas.SecurityHeaderTypePlainNas)
+	msg.RegistrationCompleteMessageIdentity.SetMessageType(extnas.MsgTypeRegistrationComplete)
+	return encodeWithBuilder(msg.EncodeRegistrationComplete)
 }
 
 type UlNasTransport struct {
@@ -269,45 +243,30 @@ type UlNasTransport struct {
 }
 
 func (m *UlNasTransport) Encode() *utils.Buffer {
-	b := utils.NewEmptyBuffer()
-	b.AppendByte(PD_5G_MOBILITY_MANAGEMENT)
-	b.AppendByte(0x00)
-	b.AppendByte(MsgTypeUlNasTransport)
-	b.AppendByte(m.PayloadContainerType & 0x0F)
-	b.AppendUint16(uint16(len(m.PayloadContainer)))
-	b.AppendBytes(m.PayloadContainer)
-
+	msg := extmsg.NewULNASTransport(extnas.MsgTypeULNASTransport)
+	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_MOBILITY_MANAGEMENT)
+	msg.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(extnas.SecurityHeaderTypePlainNas)
+	msg.ULNASTRANSPORTMessageIdentity.SetMessageType(extnas.MsgTypeULNASTransport)
+	msg.SpareHalfOctetAndPayloadContainerType.SetPayloadContainerType(m.PayloadContainerType)
+	msg.PayloadContainer.SetLen(uint16(len(m.PayloadContainer)))
+	copy(msg.PayloadContainer.Buffer, m.PayloadContainer)
 	if m.PduSessionID != 0 {
-		b.AppendByte(0x12)
-		b.AppendByte(0x01)
-		b.AppendByte(m.PduSessionID)
+		ps := exttype.NewPduSessionID2Value(extmsg.ULNASTransportPduSessionID2ValueType)
+		ps.SetPduSessionID2Value(m.PduSessionID)
+		msg.PduSessionID2Value = ps
 	}
-
 	if m.RequestType != 0 {
-		b.AppendByte(0x80 | (m.RequestType & 0x0F))
+		req := exttype.NewRequestType(extmsg.ULNASTransportRequestTypeType)
+		req.SetRequestTypeValue(m.RequestType)
+		msg.RequestType = req
 	}
-
-	if m.SNssai != nil {
-		body := utils.NewEmptyBuffer()
-		body.AppendByte(m.SNssai.SST)
-		if len(m.SNssai.SD) == 3 {
-			body.AppendBytes(m.SNssai.SD)
-		}
-		b.AppendByte(0x22)
-		b.AppendByte(byte(body.Len()))
-		b.Append(body)
-	}
-
+	msg.SNSSAI = buildSNSSAI(m.SNssai, extmsg.ULNASTransportSNSSAIType)
 	if m.Dnn != "" {
-		body := utils.NewEmptyBuffer()
-		body.AppendByte(byte(len(m.Dnn)))
-		body.AppendBytes([]byte(m.Dnn))
-		b.AppendByte(0x25)
-		b.AppendByte(byte(body.Len()))
-		b.Append(body)
+		dnn := exttype.NewDNN(extmsg.ULNASTransportDNNType)
+		dnn.SetDNN(m.Dnn)
+		msg.DNN = dnn
 	}
-
-	return b
+	return encodeWithBuilder(msg.EncodeULNASTransport)
 }
 
 type DlNasTransport struct {
@@ -317,35 +276,23 @@ type DlNasTransport struct {
 }
 
 func DecodeDlNasTransport(data []byte) (*DlNasTransport, error) {
-	if len(data) < 6 {
-		return nil, fmt.Errorf("DL NAS Transport too short")
+	wire := append([]byte(nil), data...)
+	msg := extnas.NewMessage()
+	if err := msg.PlainNasDecode(&wire); err != nil {
+		return nil, err
 	}
-	if data[2] != MsgTypeDlNasTransport {
-		return nil, fmt.Errorf("not a DL NAS Transport: 0x%02x", data[2])
+	if msg.GmmMessage == nil || msg.GmmMessage.DLNASTransport == nil {
+		return nil, fmt.Errorf("not a DL NAS Transport")
 	}
-
-	m := &DlNasTransport{
-		PayloadContainerType: data[3] & 0x0F,
+	src := msg.GmmMessage.DLNASTransport
+	out := &DlNasTransport{
+		PayloadContainerType: src.SpareHalfOctetAndPayloadContainerType.GetPayloadContainerType(),
+		PayloadContainer:     append([]byte(nil), src.PayloadContainer.Buffer...),
 	}
-	containerLen := int(data[4])<<8 | int(data[5])
-	if len(data) < 6+containerLen {
-		return nil, fmt.Errorf("DL NAS Transport container truncated")
+	if src.PduSessionID2Value != nil {
+		out.PduSessionID = src.PduSessionID2Value.GetPduSessionID2Value()
 	}
-	m.PayloadContainer = append([]byte(nil), data[6:6+containerLen]...)
-	offset := 6 + containerLen
-
-	for offset < len(data) {
-		iei := data[offset]
-		offset++
-		switch iei {
-		case 0x12:
-			m.PduSessionID = data[offset]
-			offset++
-		default:
-			return m, nil
-		}
-	}
-	return m, nil
+	return out, nil
 }
 
 type SNssai struct {
@@ -361,16 +308,19 @@ type PduSessionEstablishmentRequest struct {
 }
 
 func (m *PduSessionEstablishmentRequest) Encode() *utils.Buffer {
-	b := utils.NewEmptyBuffer()
-	b.AppendByte(PD_5G_SESSION_MANAGEMENT)
-	b.AppendByte(m.PduSessionID)
-	b.AppendByte(m.Pti)
-	b.AppendByte(MsgTypePduSessionEstablishmentRequest)
-	b.AppendByte(0xFF)
-	b.AppendByte(0xFF)
-	b.AppendByte(0x90 | (m.PduSessionType & 0x0F))
-	b.AppendByte(0xA0 | (m.SscMode & 0x0F))
-	return b
+	msg := extmsg.NewPDUSessionEstablishmentRequest(extnas.MsgTypePDUSessionEstablishmentRequest)
+	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_SESSION_MANAGEMENT)
+	msg.PDUSessionID.SetPDUSessionID(m.PduSessionID)
+	msg.PTI.SetPTI(m.Pti)
+	msg.PDUSESSIONESTABLISHMENTREQUESTMessageIdentity.SetMessageType(extnas.MsgTypePDUSessionEstablishmentRequest)
+	msg.IntegrityProtectionMaximumDataRate.Octet = [2]uint8{0xff, 0xff}
+	pduType := exttype.NewPDUSessionType(extmsg.PDUSessionEstablishmentRequestPDUSessionTypeType)
+	pduType.SetPDUSessionTypeValue(m.PduSessionType)
+	msg.PDUSessionType = pduType
+	ssc := exttype.NewSSCMode(extmsg.PDUSessionEstablishmentRequestSSCModeType)
+	ssc.SetSSCMode(m.SscMode)
+	msg.SSCMode = ssc
+	return encodeWithBuilder(msg.EncodePDUSessionEstablishmentRequest)
 }
 
 type PduSessionEstablishmentAccept struct {
@@ -379,17 +329,24 @@ type PduSessionEstablishmentAccept struct {
 }
 
 func DecodePduSessionEstablishmentAccept(data []byte) (*PduSessionEstablishmentAccept, error) {
-	if len(data) < 4 {
-		return nil, fmt.Errorf("PDU Session Establishment Accept too short")
+	wire := append([]byte(nil), data...)
+	msg := extnas.NewMessage()
+	if err := msg.PlainNasDecode(&wire); err != nil {
+		return nil, err
 	}
-	if data[0] != PD_5G_SESSION_MANAGEMENT {
-		return nil, fmt.Errorf("unexpected SM protocol discriminator 0x%02x", data[0])
+	if msg.GsmMessage == nil || msg.GsmMessage.PDUSessionEstablishmentAccept == nil {
+		return nil, fmt.Errorf("not a PDU Session Establishment Accept")
 	}
-	if data[3] != MsgTypePduSessionEstablishmentAccept {
-		return nil, fmt.Errorf("not a PDU Session Establishment Accept: 0x%02x", data[3])
-	}
+	src := msg.GsmMessage.PDUSessionEstablishmentAccept
 	return &PduSessionEstablishmentAccept{
-		PduSessionID: data[1],
-		Pti:          data[2],
+		PduSessionID: src.PDUSessionID.GetPDUSessionID(),
+		Pti:          src.PTI.GetPTI(),
 	}, nil
+}
+
+func boolToUint8(v bool) uint8 {
+	if v {
+		return 1
+	}
+	return 0
 }
