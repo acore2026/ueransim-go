@@ -86,7 +86,8 @@ func (h *RlsTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 				Payload: rlc.UpperToRlcMessage{
 					Mode: rlc.ModeUM,
 					Pdu:  payload.Data,
-				},
+				    SessionID: h.sessionID,
+},
 			})
 		}
 
