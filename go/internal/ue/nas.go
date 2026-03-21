@@ -287,8 +287,8 @@ func (h *NasTaskHandler) handleSecurityModeCommand(data []byte) error {
 	h.sec.KnasInt = kdf.DeriveKnas(kAmf, 2, cmd.SelectedIntegrityAlgorithm)
 	h.sec.IntegrityAlgorithm = cmd.SelectedIntegrityAlgorithm
 	h.sec.CipheringAlgorithm = cmd.SelectedCipheringAlgorithm
-	h.sec.UlCount = 0
-	h.sec.DlCount = 0
+	h.sec.UlCount = secnas.NasCount{}
+	h.sec.DlCount = secnas.NasCount{}
 	h.state = StateSecurityMode
 
 	h.logger.Info("derived NAS keys", "integrity", cmd.SelectedIntegrityAlgorithm, "ciphering", cmd.SelectedCipheringAlgorithm)

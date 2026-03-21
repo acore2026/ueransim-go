@@ -9,15 +9,26 @@ import (
 	"github.com/acore2026/ueransim-go/internal/security/kdf"
 )
 
+type NasCount struct {
+	Overflow uint32 // 24-bit
+	SQN      uint8  // 8-bit
+}
+
+func (c NasCount) Uint32() uint32 {
+	return (c.Overflow << 8) | uint32(c.SQN)
+}
+
 type SecurityContext struct {
 	Kamf    []byte
 	KnasInt []byte
 	KnasEnc []byte
-	UlCount uint32
-	DlCount uint32
+	UlCount NasCount
+	DlCount NasCount
 
 	IntegrityAlgorithm byte
 	CipheringAlgorithm byte
+
+	LastDlSQNs []uint8
 }
 
 func NewSecurityContext(kNasInt, kNasEnc []byte, integrityAlg, cipheringAlg byte) *SecurityContext {
@@ -26,8 +37,42 @@ func NewSecurityContext(kNasInt, kNasEnc []byte, integrityAlg, cipheringAlg byte
 		KnasEnc:            kNasEnc,
 		IntegrityAlgorithm: integrityAlg,
 		CipheringAlgorithm: cipheringAlg,
-		UlCount:            0,
-		DlCount:            0,
+		UlCount:            NasCount{},
+		DlCount:            NasCount{},
+		LastDlSQNs:         make([]uint8, 0, 16),
+	}
+}
+
+func (sc *SecurityContext) EstimatedDlCount(sn uint8) NasCount {
+	count := sc.DlCount
+	if count.SQN > sn {
+		count.Overflow = (count.Overflow + 1) & 0xFFFFFF
+	}
+	count.SQN = sn
+	return count
+}
+
+func (sc *SecurityContext) UpdateDlCount(count NasCount) {
+	sc.DlCount = count
+}
+
+func (sc *SecurityContext) CheckForReplay(sn uint8) bool {
+	for _, s := range sc.LastDlSQNs {
+		if s == sn {
+			return false
+		}
+	}
+	sc.LastDlSQNs = append(sc.LastDlSQNs, sn)
+	if len(sc.LastDlSQNs) > 16 {
+		sc.LastDlSQNs = sc.LastDlSQNs[1:]
+	}
+	return true
+}
+
+func (sc *SecurityContext) IncrementUlCount() {
+	sc.UlCount.SQN++
+	if sc.UlCount.SQN == 0 {
+		sc.UlCount.Overflow = (sc.UlCount.Overflow + 1) & 0xFFFFFF
 	}
 }
 
@@ -35,7 +80,7 @@ func (sc *SecurityContext) Protect(data []byte, headerType nas.SecurityHeaderTyp
 	direction := byte(0) // Uplink
 	bearer := byte(1)    // 3GPP access
 
-	count := sc.UlCount
+	count := sc.UlCount.Uint32()
 	if headerType == nas.SecurityHeaderTypeIntegrityProtectedWithNewSecurityContext || headerType == nas.SecurityHeaderTypeIntegrityProtectedAndCipheredWithNewSecurityContext {
 		count = 0
 	}
@@ -51,7 +96,7 @@ func (sc *SecurityContext) Protect(data []byte, headerType nas.SecurityHeaderTyp
 
 	// TS 24.501 NIA2: MAC over [SN(1)][Ciphered NAS PDU(n)]
 	msgForMac := make([]byte, 1+len(payload))
-	msgForMac[0] = byte(count & 0xFF)
+	msgForMac[0] = uint8(count & 0xFF)
 	copy(msgForMac[1:], payload)
 
 	mac, err := NIA2(sc.KnasInt, count, bearer, direction, msgForMac)
@@ -64,10 +109,10 @@ func (sc *SecurityContext) Protect(data []byte, headerType nas.SecurityHeaderTyp
 	res[0] = nas.PD_5G_MOBILITY_MANAGEMENT
 	res[1] = byte(headerType)
 	copy(res[2:6], mac)
-	res[6] = byte(count & 0xFF)
+	res[6] = uint8(count & 0xFF)
 	copy(res[7:], payload)
 
-	sc.UlCount++
+	sc.IncrementUlCount()
 	return res, nil
 }
 
@@ -85,16 +130,21 @@ func (sc *SecurityContext) Unprotect(data []byte) ([]byte, nas.SecurityHeaderTyp
 	bearer := byte(1)    // 3GPP access
 
 	mac := data[2:6]
-	sn := uint32(data[6])
+	sn := uint8(data[6])
 	payload := data[7:]
 
-	count := (sc.DlCount & 0xFFFFFF00) | sn
+	if !sc.CheckForReplay(sn) {
+		return nil, headerType, fmt.Errorf("NAS replay protection triggered for SN %d", sn)
+	}
+
+	estimated := sc.EstimatedDlCount(sn)
+	count := estimated.Uint32()
 	if headerType == nas.SecurityHeaderTypeIntegrityProtectedWithNewSecurityContext {
 		count = 0
 	}
 
 	msgForMac := make([]byte, 1+len(payload))
-	msgForMac[0] = byte(sn)
+	msgForMac[0] = sn
 	copy(msgForMac[1:], payload)
 
 	integrityKey := sc.KnasInt
@@ -127,6 +177,6 @@ func (sc *SecurityContext) Unprotect(data []byte) ([]byte, nas.SecurityHeaderTyp
 		}
 	}
 
-	sc.DlCount = count + 1
+	sc.UpdateDlCount(estimated)
 	return payload, headerType, nil
 }

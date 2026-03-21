@@ -36,18 +36,113 @@ func BuildRRCSetupRequest(ueIdentity uint64) []byte {
 }
 
 func BuildRRCSetupComplete(nasPdu []byte) []byte {
+	bs := utils.NewBitString()
+
 	// UL-DCCH-Message ::= SEQUENCE { message Choice }
-	// This is much more complex, for now we will use a "Container" approach
-	// where we wrap NAS in a simplified RRC-like structure.
-	// In a real UPER, this would be a sequence of many fields.
-	
-	// For UERANSIM-Go to UERANSIM-Go, we can define a custom "SimpleRRC" 
-	// until we have a real UPER.
-	
-	b := utils.NewEmptyBuffer()
-	b.AppendByte(0x01) // Type: RRCSetupComplete
-	b.AppendUint32(uint32(len(nasPdu)))
-	b.AppendBytes(nasPdu)
-	
-	return b.Data()
+	// message Choice Index 0: c1
+	bs.WriteBits(0, 1)
+
+	// c1 choice index 2 (rrcSetupComplete). 16 options -> 4 bits.
+	bs.WriteBits(2, 4)
+
+	// RRCSetupComplete ::= SEQUENCE { rrc-TransactionIdentifier, criticalExtensions Choice }
+	// rrc-TransactionIdentifier = 0 (2 bits)
+	bs.WriteBits(0, 2)
+
+	// criticalExtensions choice index 0 (rrcSetupComplete)
+	bs.WriteBits(0, 1)
+
+	// RRCSetupComplete-IEs ::= SEQUENCE { ... }
+	// selectedPLMN-Identity = 1 (index 0). INTEGER (1..12) -> 4 bits.
+	bs.WriteBits(0, 4)
+
+	// registeredAMF OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// guami-Type OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// s-NSSAI-List OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// dedicatedNAS-Message (OCTET STRING)
+	// UPER length determinant for small length (<128)
+	bs.WriteBits(len(nasPdu), 8)
+	for _, b := range nasPdu {
+		bs.WriteBits(int(b), 8)
+	}
+
+	// ng-5G-S-TMSI-Value OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// lateNonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// nonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	return bs.Data()
+}
+
+func BuildULInformationTransfer(nasPdu []byte) []byte {
+	bs := utils.NewBitString()
+
+	// UL-DCCH-Message ::= SEQUENCE { message Choice }
+	// message Choice Index 0: c1
+	bs.WriteBits(0, 1)
+
+	// c1 choice index 7 (ulInformationTransfer). 16 options -> 4 bits.
+	bs.WriteBits(7, 4)
+
+	// ULInformationTransfer ::= SEQUENCE { criticalExtensions Choice }
+	// criticalExtensions choice index 0 (ulInformationTransfer)
+	bs.WriteBits(0, 1)
+
+	// ULInformationTransfer-IEs ::= SEQUENCE { ... }
+	// dedicatedNAS-Message (OCTET STRING)
+	bs.WriteBits(len(nasPdu), 8)
+	for _, b := range nasPdu {
+		bs.WriteBits(int(b), 8)
+	}
+
+	// lateNonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// nonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	return bs.Data()
+}
+
+func BuildDLInformationTransfer(nasPdu []byte) []byte {
+	bs := utils.NewBitString()
+
+	// DL-DCCH-Message ::= SEQUENCE { message Choice }
+	// message Choice Index 0: c1
+	bs.WriteBits(0, 1)
+
+	// c1 choice index 5 (dlInformationTransfer). 16 options -> 4 bits.
+	bs.WriteBits(5, 4)
+
+	// DLInformationTransfer ::= SEQUENCE { rrc-TransactionIdentifier, criticalExtensions Choice }
+	// rrc-TransactionIdentifier = 0 (2 bits)
+	bs.WriteBits(0, 2)
+
+	// criticalExtensions choice index 0 (dlInformationTransfer)
+	bs.WriteBits(0, 1)
+
+	// DLInformationTransfer-IEs ::= SEQUENCE { ... }
+	// dedicatedNAS-Message (OCTET STRING)
+	bs.WriteBits(len(nasPdu), 8)
+	for _, b := range nasPdu {
+		bs.WriteBits(int(b), 8)
+	}
+
+	// lateNonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// nonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	return bs.Data()
 }
