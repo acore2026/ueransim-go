@@ -1,0 +1,19 @@
+# Ignore everything by default
+*
+
+# Allow the Go source code
+!go/
+
+# Allow the Dockerfile itself
+!Dockerfile
+
+# Ignore build artifacts and local dev files
+go/bin/
+go/pkg/
+src/
+asn/
+ext/
+.git/
+.codex/
+.specify/
+openspec/
