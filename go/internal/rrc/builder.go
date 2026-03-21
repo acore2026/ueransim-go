@@ -53,7 +53,6 @@ func BuildRRCSetup() []byte {
 	bs.WriteBits(0, 1)
 
 	// RRCSetup-IEs ::= SEQUENCE { ... }
-	// We'll skip complex IEs for now and just send a minimal valid-looking bit-stream.
 	bs.WriteBits(0, 1) // lateNonCriticalExtension absent
 	bs.WriteBits(0, 1) // nonCriticalExtension absent
 
@@ -197,4 +196,37 @@ func BuildRRCReconfigurationComplete() []byte {
 	bs.WriteBits(0, 1)
 
 	return bs.Data()
+}
+
+func ExtractNasPdu(rrcPdu []byte) []byte {
+	if len(rrcPdu) < 3 {
+		return nil
+	}
+
+	// Check for RRCSetupComplete
+	if rrcPdu[0] == 0x10 && (rrcPdu[1]&0xFE) == 0x00 {
+		nasLen := int(rrcPdu[1]&0x01)<<7 | int(rrcPdu[2]>>1)
+		if len(rrcPdu) >= 3+nasLen {
+			nasPdu := make([]byte, nasLen)
+			for i := 0; i < nasLen; i++ {
+				nasPdu[i] = uint8(rrcPdu[i+2]&0x01)<<7 | uint8(rrcPdu[i+3]>>1)
+			}
+			return nasPdu
+		}
+	}
+
+	// Check for ULInformationTransfer
+	// Octet 0: 0 (c1) | 0111 (index 7) | 0 (critical 0) | LL (len bits 0-1) = 0x38, 0x39, 0x3A, 0x3B
+	if (rrcPdu[0] & 0xFC) == 0x38 {
+		nasLen := int(rrcPdu[0]&0x03)<<6 | int(rrcPdu[1]>>2)
+		if len(rrcPdu) >= 2+nasLen {
+			nasPdu := make([]byte, nasLen)
+			for i := 0; i < nasLen; i++ {
+				nasPdu[i] = uint8(rrcPdu[i+1]&0x03)<<6 | uint8(rrcPdu[i+2]>>2)
+			}
+			return nasPdu
+		}
+	}
+
+	return nil
 }

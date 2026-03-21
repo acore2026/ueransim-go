@@ -8,8 +8,8 @@ import (
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/gnb/tasks"
-	"github.com/acore2026/ueransim-go/internal/gnbctx"
 	"github.com/acore2026/ueransim-go/internal/lib/udp"
+	"github.com/acore2026/ueransim-go/internal/rlc"
 	"github.com/acore2026/ueransim-go/internal/rls"
 	"github.com/acore2026/ueransim-go/internal/rrc"
 )
@@ -18,18 +18,27 @@ type RlsTaskHandler struct {
 	logger     logging.Logger
 	udpHandler *udp.ServerTaskHandler
 	addr       string
+	rlcTask    *runtime.Task
 	ngapTask   *runtime.Task
 	gtpTask    *runtime.Task
 	lastUeAddr *net.UDPAddr
 }
 
-func NewRlsTaskHandler(logger logging.Logger, addr string, ngapTask *runtime.Task, gtpTask *runtime.Task) *RlsTaskHandler {
+func NewRlsTaskHandler(logger logging.Logger, addr string, rlcTask *runtime.Task, gtpTask *runtime.Task) *RlsTaskHandler {
 	return &RlsTaskHandler{
-		logger:   logger.With("component", "rls"),
-		addr:     addr,
-		ngapTask: ngapTask,
-		gtpTask:  gtpTask,
+		logger:  logger.With("component", "rls"),
+		addr:    addr,
+		rlcTask: rlcTask,
+		gtpTask: gtpTask,
 	}
+}
+
+func (h *RlsTaskHandler) SetRrcTask(t *runtime.Task) {
+	h.rlcTask = t
+}
+
+func (h *RlsTaskHandler) SetNgapTask(t *runtime.Task) {
+	h.ngapTask = t
 }
 
 func (h *RlsTaskHandler) OnStart(ctx context.Context, t *runtime.Task) error {
@@ -46,6 +55,52 @@ func (h *RlsTaskHandler) OnStart(ctx context.Context, t *runtime.Task) error {
 
 func (h *RlsTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) error {
 	switch msg.Type {
+	case "rlc_to_rls":
+		payload := msg.Payload.(rlc.RlcToRlsMessage)
+		if h.lastUeAddr == nil {
+			return nil
+		}
+
+		rlsMsg := &rls.RlsMessage{
+			MsgType: rls.PDU_TRANSMISSION,
+			Sti:     1,
+			PduType: payload.PduType,
+			Pdu:     payload.Pdu,
+			Payload: payload.Payload,
+		}
+
+		encoded, err := rlsMsg.Encode()
+		if err != nil {
+			return err
+		}
+
+		return h.udpHandler.Send(h.lastUeAddr, encoded)
+
+	case "rlc_to_ccch":
+		// UL-CCCH Message index 0 is RRCSetupRequest
+		h.logger.Info("received RRCSetupRequest, sending RRCSetup")
+		rrcResp := rrc.BuildRRCSetup()
+		return h.rlcTask.Send(runtime.Message{
+			Type: "upper_to_rlc",
+			Payload: rlc.UpperToRlcMessage{
+				Mode: rlc.ModeTM,
+				Pdu:  rrcResp,
+			},
+		})
+
+	case "rlc_to_nas":
+		nasPdu := msg.Payload.([]byte)
+		h.logger.Info("extracted NAS PDU from RLC", "hex", hex.EncodeToString(nasPdu))
+		if h.ngapTask != nil {
+			return h.ngapTask.Send(runtime.Message{
+				Type:    "rls_to_ngap",
+				Payload: nasPdu,
+			})
+		}
+
+	case tasks.MessageTypeRlsToGtp:
+		return h.gtpTask.Send(msg)
+
 	case udp.MessageTypeUdpReceive:
 		h.logger.Info("received radio packet from UE")
 
@@ -58,113 +113,22 @@ func (h *RlsTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 			return nil
 		}
 
-		h.logger.Info("decoded RLS message", "type", rlsMsg.MsgType, "pduType", rlsMsg.PduType)
+		h.logger.Info("decoded RLS message", "type", rlsMsg.MsgType, "pduType", rlsMsg.PduType, "payload", rlsMsg.Payload)
 
-		if rlsMsg.MsgType == rls.PDU_TRANSMISSION && rlsMsg.PduType == rls.PDU_TYPE_RRC {
-			// Extract NAS PDU from authentic bit-accurate RRC messages.
-			nasPdu := []byte(nil)
-
-			if len(rlsMsg.Pdu) > 2 {
-				// Detect authentic bit-stream
-				
-				// RRCSetupRequest (UL-CCCH):
-				// bits: 0 (initiating) | 0 (c1) | 00 (rrcSetupRequest) -> 00000000 -> 0x00
-				if (rlsMsg.Pdu[0] & 0xF0) == 0x00 {
-					h.logger.Info("received RRCSetupRequest, sending RRCSetup")
-					rrcResp := rrc.BuildRRCSetup()
-					rlsResp := &rls.RlsMessage{
-						MsgType: rls.PDU_TRANSMISSION,
-						Sti:     1,
-						PduType: rls.PDU_TYPE_RRC,
-						Pdu:     rrcResp,
-					}
-					encoded, _ := rlsResp.Encode()
-					_ = h.udpHandler.Send(h.lastUeAddr, encoded)
-					return nil
-				}
-
-				// RRCSetupComplete:
-				if rlsMsg.Pdu[0] == 0x10 && (rlsMsg.Pdu[1]&0xFE) == 0x00 {
-					nasLen := int(rlsMsg.Pdu[1]&0x01)<<7 | int(rlsMsg.Pdu[2]>>1)
-					if len(rlsMsg.Pdu) >= 3+nasLen {
-						nasPdu = make([]byte, nasLen)
-						for i := 0; i < nasLen; i++ {
-							nasPdu[i] = uint8(rlsMsg.Pdu[i+2]&0x01)<<7 | uint8(rlsMsg.Pdu[i+3]>>1)
-						}
-					}
-				} else if (rlsMsg.Pdu[0] & 0xFC) == 0x38 {
-					// ULInformationTransfer
-					nasLen := int(rlsMsg.Pdu[0]&0x03)<<6 | int(rlsMsg.Pdu[1]>>2)
-					if len(rlsMsg.Pdu) >= 2+nasLen {
-						nasPdu = make([]byte, nasLen)
-						for i := 0; i < nasLen; i++ {
-							nasPdu[i] = uint8(rlsMsg.Pdu[i+1]&0x03)<<6 | uint8(rlsMsg.Pdu[i+2]>>2)
-						}
-					}
-				}
+		if rlsMsg.MsgType == rls.PDU_TRANSMISSION {
+			if h.rlcTask == nil {
+				h.logger.Warn("RLC task not set, dropping PDU")
+				return nil
 			}
-
-			if nasPdu != nil {
-				h.logger.Info("extracted NAS PDU from RRC", "hex", hex.EncodeToString(nasPdu))
-				return h.ngapTask.Send(runtime.Message{
-					Type:    "rls_to_ngap",
-					Payload: nasPdu,
-				})
-			}
-		}
-		if rlsMsg.MsgType == rls.PDU_TRANSMISSION && rlsMsg.PduType == rls.PduTypeData {
-			return h.gtpTask.Send(runtime.Message{
-				Type: tasks.MessageTypeRlsToGtp,
-				Payload: gnbctx.UplinkPacket{
-					SessionID: uint8(rlsMsg.Payload),
-					Data:      append([]byte(nil), rlsMsg.Pdu...),
+			return h.rlcTask.Send(runtime.Message{
+				Type: "rls_to_rlc",
+				Payload: rlc.RlsToRlcMessage{
+					PduType: rlsMsg.PduType,
+					Pdu:     rlsMsg.Pdu,
+					Payload: rlsMsg.Payload,
 				},
 			})
 		}
-
-	case "ngap_to_rls":
-		if h.lastUeAddr == nil {
-			h.logger.Info("cannot send downlink message: no UE address known")
-			return nil
-		}
-
-		nasPdu := msg.Payload.([]byte)
-		h.logger.Info("received NAS from NGAP, sending to UE via RLS")
-
-		// Wrap NAS in authentic DLInformationTransfer
-		rrcPdu := rrc.BuildDLInformationTransfer(nasPdu)
-
-		rlsMsg := &rls.RlsMessage{
-			MsgType: rls.PDU_TRANSMISSION,
-			Sti:     1,
-			PduType: rls.PDU_TYPE_RRC,
-			Pdu:     rrcPdu,
-		}
-
-		encoded, err := rlsMsg.Encode()
-		if err != nil {
-			return err
-		}
-
-		return h.udpHandler.Send(h.lastUeAddr, encoded)
-	case tasks.MessageTypeGtpToRls:
-		if h.lastUeAddr == nil {
-			h.logger.Info("cannot send downlink user-plane packet: no UE address known")
-			return nil
-		}
-		payload := msg.Payload.(gnbctx.DownlinkPacket)
-		rlsMsg := &rls.RlsMessage{
-			MsgType: rls.PDU_TRANSMISSION,
-			Sti:     1,
-			PduType: rls.PduTypeData,
-			Payload: uint32(payload.SessionID),
-			Pdu:     payload.Data,
-		}
-		encoded, err := rlsMsg.Encode()
-		if err != nil {
-			return err
-		}
-		return h.udpHandler.Send(h.lastUeAddr, encoded)
 	}
 	return nil
 }

@@ -2,12 +2,15 @@ package tasks
 
 import (
 	"context"
+	"encoding/hex"
 
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/gnbctx"
 	"github.com/acore2026/ueransim-go/internal/lib/sctp"
 	"github.com/acore2026/ueransim-go/internal/ngap"
+	"github.com/acore2026/ueransim-go/internal/rlc"
+	"github.com/acore2026/ueransim-go/internal/rrc"
 	"github.com/free5gc/ngap/ngapType"
 )
 
@@ -19,7 +22,7 @@ type GnbNgapTaskHandler struct {
 	uli          *ngapType.UserLocationInformation
 	localGTPIP   string
 	sctpTask     *runtime.Task
-	rlsTask      *runtime.Task
+	rlcTask      *runtime.Task
 	sessionStore *gnbctx.SessionStore
 
 	// For testing, track if we already sent InitialUEMessage
@@ -27,7 +30,7 @@ type GnbNgapTaskHandler struct {
 	amfUeId     int64
 }
 
-func NewGnbNgapTaskHandler(logger logging.Logger, gnbName string, gnbId []byte, plmnId []byte, uli *ngapType.UserLocationInformation, localGTPIP string, sctpTask *runtime.Task, rlsTask *runtime.Task, sessionStore *gnbctx.SessionStore) *GnbNgapTaskHandler {
+func NewGnbNgapTaskHandler(logger logging.Logger, gnbName string, gnbId []byte, plmnId []byte, uli *ngapType.UserLocationInformation, localGTPIP string, sctpTask *runtime.Task, rlcTask *runtime.Task, sessionStore *gnbctx.SessionStore) *GnbNgapTaskHandler {
 	return &GnbNgapTaskHandler{
 		logger:       logger.With("component", "ngap"),
 		gnbName:      gnbName,
@@ -36,7 +39,7 @@ func NewGnbNgapTaskHandler(logger logging.Logger, gnbName string, gnbId []byte, 
 		uli:          uli,
 		localGTPIP:   localGTPIP,
 		sctpTask:     sctpTask,
-		rlsTask:      rlsTask,
+		rlcTask:      rlcTask,
 		sessionStore: sessionStore,
 		initialSent:  false,
 	}
@@ -74,12 +77,12 @@ func (h *GnbNgapTaskHandler) OnMessage(ctx context.Context, msg runtime.Message)
 		var err error
 
 		if !h.initialSent {
-			h.logger.Info("received NAS PDU from RLS, sending InitialUEMessage")
+			h.logger.Info("received NAS PDU from RLS, sending InitialUEMessage", "hex", hex.EncodeToString(nasPdu))
 			ranUeNgapId := int64(1)
 			pdu, err = ngap.BuildInitialUEMessage(ranUeNgapId, nasPdu, h.uli)
 			h.initialSent = true
 		} else {
-			h.logger.Info("received NAS PDU from RLS, sending UplinkNASTransport")
+			h.logger.Info("received NAS PDU from RLS, sending UplinkNASTransport", "hex", hex.EncodeToString(nasPdu))
 			ranUeNgapId := int64(1)
 			pdu, err = ngap.BuildUplinkNASTransport(ranUeNgapId, h.amfUeId, nasPdu, h.uli)
 		}
@@ -103,13 +106,17 @@ func (h *GnbNgapTaskHandler) OnMessage(ctx context.Context, msg runtime.Message)
 		})
 
 	case sctp.MessageTypeSctpReceive:
-		h.logger.Info("received NGAP message from AMF")
-
 		data := msg.Payload.(sctp.ReceiveMessage).Data
 		pdu, err := ngap.Decode(data)
 		if err != nil {
 			h.logger.Error("failed to decode NGAP message", "error", err)
 			return nil
+		}
+
+		if pdu.Present == ngapType.NGAPPDUPresentInitiatingMessage {
+			h.logger.Info("received NGAP initiating message", "procedureCode", pdu.InitiatingMessage.ProcedureCode.Value)
+		} else if pdu.Present == ngapType.NGAPPDUPresentSuccessfulOutcome {
+			h.logger.Info("received NGAP successful outcome", "procedureCode", pdu.SuccessfulOutcome.ProcedureCode.Value)
 		}
 
 		h.captureAmfUeID(pdu)
@@ -159,10 +166,14 @@ func (h *GnbNgapTaskHandler) OnMessage(ctx context.Context, msg runtime.Message)
 
 		nasPdu := ngap.GetNasPdu(pdu)
 		if nasPdu != nil {
-			h.logger.Info("forwarding downlink NAS PDU to RLS")
-			return h.rlsTask.Send(runtime.Message{
-				Type:    "ngap_to_rls",
-				Payload: nasPdu,
+			h.logger.Info("forwarding downlink NAS PDU to RLC")
+			rrcPdu := rrc.BuildDLInformationTransfer(nasPdu)
+			return h.rlcTask.Send(runtime.Message{
+				Type: "upper_to_rlc",
+				Payload: rlc.UpperToRlcMessage{
+					Mode: rlc.ModeUM,
+					Pdu:  rrcPdu,
+				},
 			})
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/acore2026/ueransim-go/internal/core/cli"
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
+	"github.com/acore2026/ueransim-go/internal/rlc"
 	"github.com/acore2026/ueransim-go/internal/ue/tun"
 )
 
@@ -36,15 +37,19 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 	}
 	rlsTask := runtime.NewTask("ue-rls", rlsLogger, rlsHandler, 64)
 
+	// 1.25 Setup RLC Task
+	rlcHandler := rlc.NewRlcTaskHandler(logger, rlsTask)
+	rlcTask := runtime.NewTask("ue-rlc", logger, rlcHandler, 64)
+
 	// 1.5 Setup TUN Task with delayed configuration from session accept.
 	tunHandler := tun.NewTaskHandler("uesimtun%d", "", cfg.TUNNetmask, 1400, true, 1, rlsTask, tunLogger)
 	tunTask := runtime.NewTask("ue-tun", tunLogger, tunHandler, 64)
 
 	// 2. Setup RRC Task
-	rrcHandler := NewRrcTaskHandler(rrcLogger, rlsTask, nil)
+	rrcHandler := NewRrcTaskHandler(rrcLogger, rlcTask, nil)
 	rrcTask := runtime.NewTask("ue-rrc", rrcLogger, rrcHandler, 64)
 
-	rlsHandler.SetRrcTask(rrcTask)
+	rlsHandler.SetRrcTask(rlcTask)
 	rlsHandler.SetTunTask(tunTask)
 
 	// 3. Setup NAS Task
@@ -52,6 +57,8 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 	nasTask := runtime.NewTask("ue-nas", nasLogger, nasHandler, 64)
 
 	rrcHandler.SetNasTask(nasTask)
+	rlcHandler.SetRrcTask(rrcTask)
+	rlcHandler.SetNasTask(tunTask) // RLC delivers Data to TUN in UE
 
 	// 4. Setup CLI Task
 	cliHandler := cli.NewCliHandler(logger, nasTask)
@@ -60,7 +67,7 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 	return &Node{
 		cfg:    cfg,
 		logger: logger,
-		group:  runtime.NewGroup(logger, nasTask, rrcTask, rlsTask, tunTask, cliTask),
+		group:  runtime.NewGroup(logger, nasTask, rrcTask, rlcTask, rlsTask, tunTask, cliTask),
 	}
 }
 

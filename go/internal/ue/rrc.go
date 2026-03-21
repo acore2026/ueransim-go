@@ -7,6 +7,7 @@ import (
 
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
+	"github.com/acore2026/ueransim-go/internal/rlc"
 	"github.com/acore2026/ueransim-go/internal/rrc"
 )
 
@@ -20,7 +21,7 @@ const (
 
 type RrcTaskHandler struct {
 	logger      logging.Logger
-	rlsTask     *runtime.Task
+	rlcTask     *runtime.Task
 	nasTask     *runtime.Task
 	isFirstResp bool
 
@@ -30,10 +31,10 @@ type RrcTaskHandler struct {
 	thisTask  *runtime.Task
 }
 
-func NewRrcTaskHandler(logger logging.Logger, rlsTask *runtime.Task, nasTask *runtime.Task) *RrcTaskHandler {
+func NewRrcTaskHandler(logger logging.Logger, rlcTask *runtime.Task, nasTask *runtime.Task) *RrcTaskHandler {
 	return &RrcTaskHandler{
 		logger:      logger.With("component", "rrc"),
-		rlsTask:     rlsTask,
+		rlcTask:     rlcTask,
 		nasTask:     nasTask,
 		isFirstResp: true,
 		state:       StateIdle,
@@ -71,7 +72,7 @@ func (h *RrcTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 	switch msg.Type {
 	case "nas_to_rrc":
 		return h.handleNasToRrc(ctx, msg.Payload.([]byte))
-	case "rls_to_rrc":
+	case "rlc_to_rrc":
 		return h.handleRlsToRrc(ctx, msg.Payload.([]byte))
 	case "t300_expiry":
 		h.logger.Warn("T300 timer expired, connection failed")
@@ -92,9 +93,12 @@ func (h *RrcTaskHandler) handleNasToRrc(ctx context.Context, nasPdu []byte) erro
 		h.state = StateConnecting
 
 		rrcPdu := rrc.BuildRRCSetupRequest(0x123456789A)
-		err := h.rlsTask.Send(runtime.Message{
-			Type:    "rrc_to_rls",
-			Payload: rrcPdu,
+		err := h.rlcTask.Send(runtime.Message{
+			Type: "upper_to_rlc",
+			Payload: rlc.UpperToRlcMessage{
+				Mode: rlc.ModeTM,
+				Pdu:  rrcPdu,
+			},
 		})
 		if err != nil {
 			return err
@@ -111,9 +115,12 @@ func (h *RrcTaskHandler) handleNasToRrc(ctx context.Context, nasPdu []byte) erro
 	case StateConnected:
 		h.logger.Info("sending NAS PDU over established connection")
 		rrcPdu := rrc.BuildULInformationTransfer(nasPdu)
-		return h.rlsTask.Send(runtime.Message{
-			Type:    "rrc_to_rls",
-			Payload: rrcPdu,
+		return h.rlcTask.Send(runtime.Message{
+			Type: "upper_to_rlc",
+			Payload: rlc.UpperToRlcMessage{
+				Mode: rlc.ModeUM,
+				Pdu:  rrcPdu,
+			},
 		})
 	}
 	return nil
@@ -124,7 +131,7 @@ func (h *RrcTaskHandler) handleRlsToRrc(ctx context.Context, rrcPdu []byte) erro
 		return nil
 	}
 
-	h.logger.Info("received RRC PDU from RLS", "hex", fmt.Sprintf("%02x", rrcPdu[0]), "state", h.state)
+	h.logger.Info("received RRC PDU from RLC", "hex", fmt.Sprintf("%02x", rrcPdu[0]), "state", h.state)
 
 	if rrcPdu[0] == 0x20 {
 		h.logger.Info("detected RRCSetup message")
@@ -139,14 +146,26 @@ func (h *RrcTaskHandler) handleRlsToRrc(ctx context.Context, rrcPdu []byte) erro
 
 				h.logger.Info("sending RRCSetupComplete with first buffered NAS PDU")
 				resp := rrc.BuildRRCSetupComplete(firstNas)
-				if err := h.rlsTask.Send(runtime.Message{Type: "rrc_to_rls", Payload: resp}); err != nil {
+				if err := h.rlcTask.Send(runtime.Message{
+					Type: "upper_to_rlc",
+					Payload: rlc.UpperToRlcMessage{
+						Mode: rlc.ModeUM,
+						Pdu:  resp,
+					},
+				}); err != nil {
 					return err
 				}
 
 				for _, nas := range h.nasBuffer {
 					h.logger.Info("sending subsequent buffered NAS PDU in ULInformationTransfer")
 					resp := rrc.BuildULInformationTransfer(nas)
-					if err := h.rlsTask.Send(runtime.Message{Type: "rrc_to_rls", Payload: resp}); err != nil {
+					if err := h.rlcTask.Send(runtime.Message{
+						Type: "upper_to_rlc",
+						Payload: rlc.UpperToRlcMessage{
+							Mode: rlc.ModeUM,
+							Pdu:  resp,
+						},
+					}); err != nil {
 						return err
 					}
 				}
@@ -162,7 +181,13 @@ func (h *RrcTaskHandler) handleRlsToRrc(ctx context.Context, rrcPdu []byte) erro
 		case 0:
 			h.logger.Info("detected RRCReconfiguration message")
 			resp := rrc.BuildRRCReconfigurationComplete()
-			return h.rlsTask.Send(runtime.Message{Type: "rrc_to_rls", Payload: resp})
+			return h.rlcTask.Send(runtime.Message{
+				Type: "upper_to_rlc",
+				Payload: rlc.UpperToRlcMessage{
+					Mode: rlc.ModeUM,
+					Pdu:  resp,
+				},
+			})
 
 		case 5:
 			h.logger.Info("detected DLInformationTransfer message")

@@ -13,6 +13,7 @@ import (
 	"github.com/acore2026/ueransim-go/internal/gnb/tasks"
 	"github.com/acore2026/ueransim-go/internal/gnbctx"
 	"github.com/acore2026/ueransim-go/internal/ngap"
+	"github.com/acore2026/ueransim-go/internal/rlc"
 	"github.com/acore2026/ueransim-go/internal/utils"
 )
 
@@ -40,13 +41,18 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	sessionStore := gnbctx.NewSessionStore()
 	rlsTask := runtime.NewTask("gnb-rls", rlsLogger, nil, 64)
 
+	// 1.5 Setup RLC Task
+	rlcHandler := rlc.NewRlcTaskHandler(logger, rlsTask)
+	rlcTask := runtime.NewTask("gnb-rlc", logger, rlcHandler, 64)
+
 	gtpLogger := logger.With("subsystem", "gtp")
 	gtpAddr := fmt.Sprintf("%s:%d", cfg.GTPIP, gnbctx.GTPUPort)
-	gtpHandler := tasks.NewGnbGtpTaskHandler(gtpLogger, gtpAddr, sessionStore, rlsTask)
+	gtpHandler := tasks.NewGnbGtpTaskHandler(gtpLogger, gtpAddr, sessionStore, rlcTask) // GTP now sends to RLC
 	gtpTask := runtime.NewTask("gnb-gtp", gtpLogger, gtpHandler, 64)
 
-	rlsHandler := NewRlsTaskHandler(rlsLogger, rlsAddr, ngapTask, gtpTask)
+	rlsHandler := NewRlsTaskHandler(rlsLogger, rlsAddr, rlcTask, gtpTask)
 	rlsTask.SetHandler(rlsHandler)
+	rlsHandler.SetNgapTask(ngapTask)
 
 	// Now create handlers with task pointers
 	amfAddr := "127.0.0.1"
@@ -59,16 +65,20 @@ func New(cfg *config.GNBConfig, logger logging.Logger) *Node {
 	tac := []byte{byte(cfg.TAC >> 16), byte(cfg.TAC >> 8), byte(cfg.TAC)}
 	nrCellID := buildNrCellIdentity(cfg.NCI)
 	uli := ngap.BuildUserLocationInformationNR(plmnId, tac, nrCellID)
-	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, uli, cfg.GTPIP, sctpTask, rlsTask, sessionStore)
+	ngapHandler := tasks.NewGnbNgapTaskHandler(ngapLogger, cfg.NodeName(), gnbId, plmnId, uli, cfg.GTPIP, sctpTask, rlcTask, sessionStore) // NGAP now sends to RLC
 	sctpHandler := tasks.NewGnbSctpTaskHandler(sctpLogger, amfAddr, amfPort, ngapTask)
+	
 	// Set handlers
 	ngapTask.SetHandler(ngapHandler)
 	sctpTask.SetHandler(sctpHandler)
+	rlcHandler.SetRrcTask(ngapTask) // RLC delivers UM RRC to NGAP
+	rlcHandler.SetNasTask(gtpTask) // RLC delivers UM Data to GTP
+	rlcHandler.SetCcchTask(rlsTask) // CCCH handled in RLS for gNB
 
 	return &Node{
 		cfg:    cfg,
 		logger: logger,
-		group:  runtime.NewGroup(logger, sctpTask, ngapTask, gtpTask, rlsTask),
+		group:  runtime.NewGroup(logger, sctpTask, ngapTask, gtpTask, rlcTask, rlsTask),
 	}
 }
 

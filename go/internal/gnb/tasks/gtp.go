@@ -10,18 +10,18 @@ import (
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/gnbctx"
 	"github.com/acore2026/ueransim-go/internal/gtp"
+	"github.com/acore2026/ueransim-go/internal/rlc"
 )
 
 const (
 	MessageTypeRlsToGtp runtime.MessageType = "rls_to_gtp"
-	MessageTypeGtpToRls runtime.MessageType = "gtp_to_rls"
 )
 
 type GnbGtpTaskHandler struct {
 	logger       logging.Logger
 	listenAddr   string
 	sessionStore *gnbctx.SessionStore
-	rlsTask      *runtime.Task
+	rlcTask      *runtime.Task
 	conn         *net.UDPConn
 	lastDl       map[uint8]recentDownlink
 }
@@ -33,12 +33,12 @@ type recentDownlink struct {
 	at   time.Time
 }
 
-func NewGnbGtpTaskHandler(logger logging.Logger, listenAddr string, sessionStore *gnbctx.SessionStore, rlsTask *runtime.Task) *GnbGtpTaskHandler {
+func NewGnbGtpTaskHandler(logger logging.Logger, listenAddr string, sessionStore *gnbctx.SessionStore, rlcTask *runtime.Task) *GnbGtpTaskHandler {
 	return &GnbGtpTaskHandler{
 		logger:       logger.With("component", "gtp"),
 		listenAddr:   listenAddr,
 		sessionStore: sessionStore,
-		rlsTask:      rlsTask,
+		rlcTask:      rlcTask,
 		lastDl:       make(map[uint8]recentDownlink),
 	}
 }
@@ -98,11 +98,13 @@ func (h *GnbGtpTaskHandler) readLoop(ctx context.Context, task *runtime.Task) {
 				continue
 			}
 			h.logger.Info("received downlink GTP-U packet", "sessionID", session.SessionID, "teid", msg.Teid, "len", len(msg.Payload))
-			_ = h.rlsTask.Send(runtime.Message{
-				Type: MessageTypeGtpToRls,
-				Payload: gnbctx.DownlinkPacket{
+			
+			_ = h.rlcTask.Send(runtime.Message{
+				Type: "upper_to_rlc",
+				Payload: rlc.UpperToRlcMessage{
+					Mode:      rlc.ModeUM,
+					Pdu:       append([]byte(nil), msg.Payload...),
 					SessionID: session.SessionID,
-					Data:      append([]byte(nil), msg.Payload...),
 				},
 			})
 		}

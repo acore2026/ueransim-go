@@ -342,7 +342,7 @@ func (h *NasTaskHandler) handleDlNasTransport(data []byte) error {
 		return nil
 	}
 
-	switch dl.PayloadContainer[3] {
+	switch dl.PayloadContainer[2] {
 	case nas.MsgTypePduSessionEstablishmentAccept:
 		accept, err := nas.DecodePduSessionEstablishmentAccept(dl.PayloadContainer)
 		if err != nil {
