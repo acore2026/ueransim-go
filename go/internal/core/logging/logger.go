@@ -26,6 +26,10 @@ func (l Logger) Error(msg string, args ...any) {
 	l.inner.Error(msg, args...)
 }
 
+func (l Logger) Warn(msg string, args ...any) {
+	l.inner.Warn(msg, args...)
+}
+
 func (l Logger) Debug(msg string, args ...any) {
 	l.inner.Debug(msg, args...)
 }

@@ -9,29 +9,54 @@ import (
 
 func BuildRRCSetupRequest(ueIdentity uint64) []byte {
 	bs := utils.NewBitString()
-	
+
 	// UL-CCCH-Message ::= SEQUENCE { message Choice }
-	// choice index 0 (initiatingMessage)
-	bs.WriteBits(0, 1) 
-	
-	// initiatingMessage choice index 0 (rrcSetupRequest)
-	bs.WriteBits(0, 1) 
-	
+	// message Choice Index 0: c1
+	bs.WriteBits(0, 1)
+
+	// c1 choice index 0 (rrcSetupRequest). 4 options -> 2 bits.
+	bs.WriteBits(0, 2)
+
 	// RRCSetupRequest ::= SEQUENCE { rrcSetupRequest-IEs RRCSetupRequest-IEs }
 	// ue-Identity choice index 0 (randomValue)
 	bs.WriteBits(0, 1)
-	
+
 	// randomValue BIT STRING (SIZE (39))
 	bs.WriteBits(int(ueIdentity>>32), 7)
 	bs.WriteBits(int(ueIdentity&0xFFFFFFFF), 32)
-	
+
 	// establishmentCause ENUMERATED (8 values)
-	// mo-Signalling (index 3)
+	// mo-Signalling (index 3). 3 bits.
 	bs.WriteBits(3, 3)
-	
+
 	// spare BIT STRING (SIZE (1))
 	bs.WriteBits(0, 1)
-	
+
+	return bs.Data()
+}
+
+func BuildRRCSetup() []byte {
+	bs := utils.NewBitString()
+
+	// DL-CCCH-Message ::= SEQUENCE { message Choice }
+	// message Choice Index 0: c1
+	bs.WriteBits(0, 1)
+
+	// c1 choice index 1 (rrcSetup). 4 options -> 2 bits.
+	bs.WriteBits(1, 2)
+
+	// RRCSetup ::= SEQUENCE { rrc-TransactionIdentifier, criticalExtensions Choice }
+	// rrc-TransactionIdentifier = 0 (2 bits)
+	bs.WriteBits(0, 2)
+
+	// criticalExtensions choice index 0 (rrcSetup)
+	bs.WriteBits(0, 1)
+
+	// RRCSetup-IEs ::= SEQUENCE { ... }
+	// We'll skip complex IEs for now and just send a minimal valid-looking bit-stream.
+	bs.WriteBits(0, 1) // lateNonCriticalExtension absent
+	bs.WriteBits(0, 1) // nonCriticalExtension absent
+
 	return bs.Data()
 }
 
@@ -138,6 +163,33 @@ func BuildDLInformationTransfer(nasPdu []byte) []byte {
 		bs.WriteBits(int(b), 8)
 	}
 
+	// lateNonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	// nonCriticalExtension OPTIONAL (absent)
+	bs.WriteBits(0, 1)
+
+	return bs.Data()
+}
+
+func BuildRRCReconfigurationComplete() []byte {
+	bs := utils.NewBitString()
+
+	// UL-DCCH-Message ::= SEQUENCE { message Choice }
+	// message Choice Index 0: c1
+	bs.WriteBits(0, 1)
+
+	// c1 choice index 1 (rrcReconfigurationComplete). 16 options -> 4 bits.
+	bs.WriteBits(1, 4)
+
+	// RRCReconfigurationComplete ::= SEQUENCE { rrc-TransactionIdentifier, criticalExtensions Choice }
+	// rrc-TransactionIdentifier = 0 (2 bits)
+	bs.WriteBits(0, 2)
+
+	// criticalExtensions choice index 0 (rrcReconfigurationComplete)
+	bs.WriteBits(0, 1)
+
+	// RRCReconfigurationComplete-IEs ::= SEQUENCE { ... }
 	// lateNonCriticalExtension OPTIONAL (absent)
 	bs.WriteBits(0, 1)
 

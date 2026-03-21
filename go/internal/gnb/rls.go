@@ -65,17 +65,25 @@ func (h *RlsTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 
 			if len(rlsMsg.Pdu) > 2 {
 				// Detect authentic bit-stream
-				// RRCSetupComplete:
-				// Octet 0: 0 (c1) | 0010 (index 2) | 00 (trans 0) | 0 (critical 0) = 0x10
-				// Octet 1: 0000 (plmn 1) | 0 (reg 0) | 0 (guami 0) | 0 (nssai 0) | L (len bit 0) = 0x00 or 0x01
-				// Octet 2: LLLLLLL (len bits 1-7) | N (nas bit 0)
 				
-				// ULInformationTransfer:
-				// Octet 0: 0 (c1) | 0111 (index 7) | 0 (critical 0) | LL (len bits 0-1) = 0x38, 0x39, 0x3A, 0x3B
-				// Octet 1: LLLLLL (len bits 2-7) | NN (nas bits 0-1)
+				// RRCSetupRequest (UL-CCCH):
+				// bits: 0 (initiating) | 0 (c1) | 00 (rrcSetupRequest) -> 00000000 -> 0x00
+				if (rlsMsg.Pdu[0] & 0xF0) == 0x00 {
+					h.logger.Info("received RRCSetupRequest, sending RRCSetup")
+					rrcResp := rrc.BuildRRCSetup()
+					rlsResp := &rls.RlsMessage{
+						MsgType: rls.PDU_TRANSMISSION,
+						Sti:     1,
+						PduType: rls.PDU_TYPE_RRC,
+						Pdu:     rrcResp,
+					}
+					encoded, _ := rlsResp.Encode()
+					_ = h.udpHandler.Send(h.lastUeAddr, encoded)
+					return nil
+				}
 
+				// RRCSetupComplete:
 				if rlsMsg.Pdu[0] == 0x10 && (rlsMsg.Pdu[1]&0xFE) == 0x00 {
-					// RRCSetupComplete
 					nasLen := int(rlsMsg.Pdu[1]&0x01)<<7 | int(rlsMsg.Pdu[2]>>1)
 					if len(rlsMsg.Pdu) >= 3+nasLen {
 						nasPdu = make([]byte, nasLen)

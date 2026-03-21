@@ -40,3 +40,20 @@ func TestBuildDLInformationTransfer(t *testing.T) {
 		t.Errorf("expected pdu[0]=0x28, got 0x%02x", rrcPdu[0])
 	}
 }
+
+func TestBuildRRCReconfigurationComplete(t *testing.T) {
+	rrcPdu := BuildRRCReconfigurationComplete()
+	
+	// Bits:
+	// 0 (1b c1) | 0001 (4b index 1) | 00 (2b trans) | 0 (1b critical) -> 00001000 -> 0x08
+	
+	t.Logf("RRC PDU: %s", hex.EncodeToString(rrcPdu))
+	
+	if len(rrcPdu) < 1 {
+		t.Fatalf("RRC PDU too short: %d", len(rrcPdu))
+	}
+	
+	if rrcPdu[0] != 0x08 {
+		t.Errorf("expected pdu[0]=0x08, got 0x%02x", rrcPdu[0])
+	}
+}

@@ -2,10 +2,20 @@ package ue
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/rrc"
+)
+
+type RrcState int
+
+const (
+	StateIdle RrcState = iota
+	StateConnecting
+	StateConnected
 )
 
 type RrcTaskHandler struct {
@@ -13,6 +23,11 @@ type RrcTaskHandler struct {
 	rlsTask     *runtime.Task
 	nasTask     *runtime.Task
 	isFirstResp bool
+
+	state     RrcState
+	nasBuffer [][]byte
+	t300Timer *time.Timer
+	thisTask  *runtime.Task
 }
 
 func NewRrcTaskHandler(logger logging.Logger, rlsTask *runtime.Task, nasTask *runtime.Task) *RrcTaskHandler {
@@ -21,6 +36,24 @@ func NewRrcTaskHandler(logger logging.Logger, rlsTask *runtime.Task, nasTask *ru
 		rlsTask:     rlsTask,
 		nasTask:     nasTask,
 		isFirstResp: true,
+		state:       StateIdle,
+		nasBuffer:   make([][]byte, 0),
+	}
+}
+
+func (h *RrcTaskHandler) startT300() {
+	h.stopT300()
+	h.t300Timer = time.AfterFunc(10*time.Second, func() {
+		if h.thisTask != nil {
+			_ = h.thisTask.Send(runtime.Message{Type: "t300_expiry"})
+		}
+	})
+}
+
+func (h *RrcTaskHandler) stopT300() {
+	if h.t300Timer != nil {
+		h.t300Timer.Stop()
+		h.t300Timer = nil
 	}
 }
 
@@ -30,54 +63,123 @@ func (h *RrcTaskHandler) SetNasTask(t *runtime.Task) {
 
 func (h *RrcTaskHandler) OnStart(ctx context.Context, t *runtime.Task) error {
 	h.logger.Info("RRC task started")
+	h.thisTask = t
 	return nil
 }
 
 func (h *RrcTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) error {
 	switch msg.Type {
 	case "nas_to_rrc":
-		nasPdu := msg.Payload.([]byte)
-		h.logger.Info("received NAS PDU, wrapping in RRC")
+		return h.handleNasToRrc(ctx, msg.Payload.([]byte))
+	case "rls_to_rrc":
+		return h.handleRlsToRrc(ctx, msg.Payload.([]byte))
+	case "t300_expiry":
+		h.logger.Warn("T300 timer expired, connection failed")
+		h.state = StateIdle
+		h.stopT300()
+		return nil
+	}
+	return nil
+}
 
-		var rrcPdu []byte
-		if h.isFirstResp {
-			h.logger.Info("using RRCSetupComplete for initial registration")
-			rrcPdu = rrc.BuildRRCSetupComplete(nasPdu)
-			h.isFirstResp = false
-		} else {
-			h.logger.Info("using ULInformationTransfer for subsequent NAS")
-			rrcPdu = rrc.BuildULInformationTransfer(nasPdu)
+func (h *RrcTaskHandler) handleNasToRrc(ctx context.Context, nasPdu []byte) error {
+	h.logger.Info("received NAS PDU from NAS layer", "len", len(nasPdu), "state", h.state)
+
+	switch h.state {
+	case StateIdle:
+		h.logger.Info("triggering RRC connection establishment")
+		h.nasBuffer = append(h.nasBuffer, nasPdu)
+		h.state = StateConnecting
+
+		rrcPdu := rrc.BuildRRCSetupRequest(0x123456789A)
+		err := h.rlsTask.Send(runtime.Message{
+			Type:    "rrc_to_rls",
+			Payload: rrcPdu,
+		})
+		if err != nil {
+			return err
 		}
 
+		h.startT300()
+		return nil
+
+	case StateConnecting:
+		h.logger.Info("buffering NAS PDU while connecting")
+		h.nasBuffer = append(h.nasBuffer, nasPdu)
+		return nil
+
+	case StateConnected:
+		h.logger.Info("sending NAS PDU over established connection")
+		rrcPdu := rrc.BuildULInformationTransfer(nasPdu)
 		return h.rlsTask.Send(runtime.Message{
 			Type:    "rrc_to_rls",
 			Payload: rrcPdu,
 		})
+	}
+	return nil
+}
 
-	case "rls_to_rrc":
-		h.logger.Info("received RRC PDU from RLS")
-		rrcPdu := msg.Payload.([]byte)
+func (h *RrcTaskHandler) handleRlsToRrc(ctx context.Context, rrcPdu []byte) error {
+	if len(rrcPdu) == 0 {
+		return nil
+	}
 
-		// Authentic bit-stream decoding:
-		// DLInformationTransfer:
-		// Octet 0: 0 (c1) | 0101 (index 5) | 00 (trans 0) | 0 (critical 0) = 0x28
-		// Octet 1: length (8 bits)
-		// Octet 2...: nasPdu
+	h.logger.Info("received RRC PDU from RLS", "hex", fmt.Sprintf("%02x", rrcPdu[0]), "state", h.state)
 
-		nasPdu := []byte(nil)
-		if len(rrcPdu) > 2 && rrcPdu[0] == 0x28 {
-			nasLen := int(rrcPdu[1])
-			if len(rrcPdu) >= 2+nasLen {
-				nasPdu = rrcPdu[2 : 2+nasLen]
+	if rrcPdu[0] == 0x20 {
+		h.logger.Info("detected RRCSetup message")
+		if h.state == StateConnecting {
+			h.state = StateConnected
+			h.stopT300()
+			h.logger.Info("RRC connection established")
+
+			if len(h.nasBuffer) > 0 {
+				firstNas := h.nasBuffer[0]
+				h.nasBuffer = h.nasBuffer[1:]
+
+				h.logger.Info("sending RRCSetupComplete with first buffered NAS PDU")
+				resp := rrc.BuildRRCSetupComplete(firstNas)
+				if err := h.rlsTask.Send(runtime.Message{Type: "rrc_to_rls", Payload: resp}); err != nil {
+					return err
+				}
+
+				for _, nas := range h.nasBuffer {
+					h.logger.Info("sending subsequent buffered NAS PDU in ULInformationTransfer")
+					resp := rrc.BuildULInformationTransfer(nas)
+					if err := h.rlsTask.Send(runtime.Message{Type: "rrc_to_rls", Payload: resp}); err != nil {
+						return err
+					}
+				}
+				h.nasBuffer = make([][]byte, 0)
 			}
 		}
+		return nil
+	}
 
-		if nasPdu != nil {
-			h.logger.Info("forwarding NAS PDU to NAS task")
-			return h.nasTask.Send(runtime.Message{
-				Type:    "rrc_to_nas",
-				Payload: nasPdu,
-			})
+	if len(rrcPdu) > 0 {
+		index := (rrcPdu[0] >> 3) & 0x0F
+		switch index {
+		case 0:
+			h.logger.Info("detected RRCReconfiguration message")
+			resp := rrc.BuildRRCReconfigurationComplete()
+			return h.rlsTask.Send(runtime.Message{Type: "rrc_to_rls", Payload: resp})
+
+		case 5:
+			h.logger.Info("detected DLInformationTransfer message")
+			if len(rrcPdu) > 2 {
+				nasLen := int(rrcPdu[1])
+				if len(rrcPdu) >= 2+nasLen {
+					nasPdu := rrcPdu[2 : 2+nasLen]
+					h.logger.Info("forwarding NAS PDU to NAS task")
+					return h.nasTask.Send(runtime.Message{Type: "rrc_to_nas", Payload: nasPdu})
+				}
+			}
+
+		case 2:
+			h.logger.Info("detected RRCRelease message")
+			h.state = StateIdle
+			h.stopT300()
+			return nil
 		}
 	}
 
@@ -85,5 +187,6 @@ func (h *RrcTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 }
 
 func (h *RrcTaskHandler) OnStop(context.Context) error {
+	h.stopT300()
 	return nil
 }
