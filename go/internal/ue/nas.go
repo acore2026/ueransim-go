@@ -26,6 +26,8 @@ const (
 	StateRegistered
 	StatePduSessionPending
 	StateSessionReady
+	StatePduSessionModificationPending
+	StatePduSessionReleasePending
 )
 
 // NasTaskHandler keeps the supported Go happy path explicit and narrow:
@@ -179,6 +181,10 @@ func (h *NasTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 		default:
 			h.logger.Info("received NAS message", "type", fmt.Sprintf("0x%02x", msgType))
 		}
+	case "nas_pdu_session_modification":
+		return h.sendPduSessionModificationRequest()
+	case "nas_pdu_session_release":
+		return h.sendPduSessionReleaseRequest()
 	}
 	return nil
 }
@@ -364,12 +370,127 @@ func (h *NasTaskHandler) handleDlNasTransport(data []byte) error {
 				return err
 			}
 		}
+	case nas.MsgTypePduSessionModificationCommand:
+		return h.handlePduSessionModificationCommand(dl.PayloadContainer)
+	case nas.MsgTypePduSessionReleaseCommand:
+		return h.handlePduSessionReleaseCommand(dl.PayloadContainer)
 	case nas.MsgTypePduSessionEstablishmentReject:
 		h.logger.Error("PDU Session Establishment Reject received")
 	default:
 		h.logger.Info("received DL NAS Transport payload", "messageType", fmt.Sprintf("0x%02x", dl.PayloadContainer[3]))
 	}
 	return nil
+}
+
+func (h *NasTaskHandler) handlePduSessionModificationCommand(payload []byte) error {
+	cmd, err := nas.DecodePduSessionModificationCommand(payload)
+	if err != nil {
+		return err
+	}
+	h.logger.Info("PDU Session Modification Command received", "psi", cmd.PduSessionID, "pti", cmd.Pti)
+
+	resp := &nas.PduSessionModificationComplete{
+		PduSessionID: cmd.PduSessionID,
+		Pti:          cmd.Pti,
+	}
+
+	ul := &nas.UlNasTransport{
+		PayloadContainerType: 1,
+		PayloadContainer:     resp.Encode().Data(),
+		PduSessionID:         cmd.PduSessionID,
+	}
+
+	h.state = StateSessionReady
+	h.logger.Info("sending PDU Session Modification Complete")
+	return h.sendProtectedNas(ul.Encode().Data(), nas.SecurityHeaderTypeIntegrityProtectedAndCiphered)
+}
+
+func (h *NasTaskHandler) handlePduSessionReleaseCommand(payload []byte) error {
+	cmd, err := nas.DecodePduSessionReleaseCommand(payload)
+	if err != nil {
+		return err
+	}
+	h.logger.Info("PDU Session Release Command received", "psi", cmd.PduSessionID, "pti", cmd.Pti)
+
+	resp := &nas.PduSessionReleaseComplete{
+		PduSessionID: cmd.PduSessionID,
+		Pti:          cmd.Pti,
+	}
+
+	ul := &nas.UlNasTransport{
+		PayloadContainerType: 1,
+		PayloadContainer:     resp.Encode().Data(),
+		PduSessionID:         cmd.PduSessionID,
+	}
+
+	h.state = StateRegistered
+	h.logger.Info("sending PDU Session Release Complete")
+	if err := h.sendProtectedNas(ul.Encode().Data(), nas.SecurityHeaderTypeIntegrityProtectedAndCiphered); err != nil {
+		return err
+	}
+
+	// Trigger user-plane cleanup
+	if h.tunTask != nil {
+		h.logger.Info("releasing user-plane resources")
+		_ = h.tunTask.Send(runtime.Message{
+			Type: tun.MessageTypeRelease,
+		})
+	}
+	return nil
+}
+
+func (h *NasTaskHandler) getNextPTI() byte {
+	h.sessionPTI++
+	if h.sessionPTI == 0 {
+		h.sessionPTI = 1
+	}
+	return h.sessionPTI
+}
+
+func (h *NasTaskHandler) sendPduSessionModificationRequest() error {
+	if h.state != StateSessionReady {
+		h.logger.Warn("cannot modify session: not in session ready state")
+		return nil
+	}
+
+	pti := h.getNextPTI()
+	req := &nas.PduSessionModificationRequest{
+		PduSessionID: h.sessionID,
+		Pti:          pti,
+	}
+
+	ul := &nas.UlNasTransport{
+		PayloadContainerType: 1,
+		PayloadContainer:     req.Encode().Data(),
+		PduSessionID:         h.sessionID,
+	}
+
+	h.state = StatePduSessionModificationPending
+	h.logger.Info("sending PDU Session Modification Request", "psi", h.sessionID, "pti", pti)
+	return h.sendProtectedNas(ul.Encode().Data(), nas.SecurityHeaderTypeIntegrityProtectedAndCiphered)
+}
+
+func (h *NasTaskHandler) sendPduSessionReleaseRequest() error {
+	if h.state != StateSessionReady {
+		h.logger.Warn("cannot release session: not in session ready state")
+		return nil
+	}
+
+	pti := h.getNextPTI()
+	req := &nas.PduSessionReleaseRequest{
+		PduSessionID: h.sessionID,
+		Pti:          pti,
+	}
+
+	ul := &nas.UlNasTransport{
+		PayloadContainerType: 1,
+		PayloadContainer:     req.Encode().Data(),
+		PduSessionID:         h.sessionID,
+	}
+
+	h.state = StatePduSessionReleasePending
+	h.logger.Info("sending PDU Session Release Request", "psi", h.sessionID, "pti", pti)
+	return h.sendProtectedNas(ul.Encode().Data(), nas.SecurityHeaderTypeIntegrityProtectedAndCiphered)
 }
 
 func (h *NasTaskHandler) sendPduSessionEstablishmentRequest() error {

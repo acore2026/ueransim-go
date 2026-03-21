@@ -6,7 +6,6 @@ import (
 	extmsg "github.com/acore2026/nas/nasMessage"
 	exttype "github.com/acore2026/nas/nasType"
 	"github.com/acore2026/ueransim-go/internal/utils"
-	"net"
 )
 
 // RegistrationRequest message
@@ -299,56 +298,6 @@ func DecodeDlNasTransport(data []byte) (*DlNasTransport, error) {
 type SNssai struct {
 	SST byte
 	SD  []byte
-}
-
-type PduSessionEstablishmentRequest struct {
-	PduSessionID   byte
-	Pti            byte
-	PduSessionType byte
-	SscMode        byte
-}
-
-func (m *PduSessionEstablishmentRequest) Encode() *utils.Buffer {
-	msg := extmsg.NewPDUSessionEstablishmentRequest(extnas.MsgTypePDUSessionEstablishmentRequest)
-	msg.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(PD_5G_SESSION_MANAGEMENT)
-	msg.PDUSessionID.SetPDUSessionID(m.PduSessionID)
-	msg.PTI.SetPTI(m.Pti)
-	msg.PDUSESSIONESTABLISHMENTREQUESTMessageIdentity.SetMessageType(extnas.MsgTypePDUSessionEstablishmentRequest)
-	msg.IntegrityProtectionMaximumDataRate.Octet = [2]uint8{0xff, 0xff}
-	pduType := exttype.NewPDUSessionType(extmsg.PDUSessionEstablishmentRequestPDUSessionTypeType)
-	pduType.SetPDUSessionTypeValue(m.PduSessionType)
-	msg.PDUSessionType = pduType
-	ssc := exttype.NewSSCMode(extmsg.PDUSessionEstablishmentRequestSSCModeType)
-	ssc.SetSSCMode(m.SscMode)
-	msg.SSCMode = ssc
-	return encodeWithBuilder(msg.EncodePDUSessionEstablishmentRequest)
-}
-
-type PduSessionEstablishmentAccept struct {
-	PduSessionID byte
-	Pti          byte
-	PDUAddress   string
-}
-
-func DecodePduSessionEstablishmentAccept(data []byte) (*PduSessionEstablishmentAccept, error) {
-	wire := append([]byte(nil), data...)
-	msg := extnas.NewMessage()
-	if err := msg.PlainNasDecode(&wire); err != nil {
-		return nil, err
-	}
-	if msg.GsmMessage == nil || msg.GsmMessage.PDUSessionEstablishmentAccept == nil {
-		return nil, fmt.Errorf("not a PDU Session Establishment Accept")
-	}
-	src := msg.GsmMessage.PDUSessionEstablishmentAccept
-	res := &PduSessionEstablishmentAccept{
-		PduSessionID: src.PDUSessionID.GetPDUSessionID(),
-		Pti:          src.PTI.GetPTI(),
-	}
-	if src.PDUAddress != nil && src.PDUAddress.GetLen() >= 5 && src.PDUAddress.GetPDUSessionTypeValue() == 1 {
-		info := src.PDUAddress.GetPDUAddressInformation()
-		res.PDUAddress = net.IPv4(info[0], info[1], info[2], info[3]).String()
-	}
-	return res, nil
 }
 
 func boolToUint8(v bool) uint8 {

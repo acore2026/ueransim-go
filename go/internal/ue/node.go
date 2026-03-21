@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/acore2026/ueransim-go/internal/config"
+	"github.com/acore2026/ueransim-go/internal/core/cli"
 	"github.com/acore2026/ueransim-go/internal/core/logging"
 	"github.com/acore2026/ueransim-go/internal/core/runtime"
 	"github.com/acore2026/ueransim-go/internal/ue/tun"
@@ -52,10 +53,14 @@ func New(cfg *config.UEConfig, logger logging.Logger) *Node {
 
 	rrcHandler.SetNasTask(nasTask)
 
+	// 4. Setup CLI Task
+	cliHandler := cli.NewCliHandler(logger, nasTask)
+	cliTask := runtime.NewTask("ue-cli", logger, cliHandler, 16)
+
 	return &Node{
 		cfg:    cfg,
 		logger: logger,
-		group:  runtime.NewGroup(logger, nasTask, rrcTask, rlsTask, tunTask),
+		group:  runtime.NewGroup(logger, nasTask, rrcTask, rlsTask, tunTask, cliTask),
 	}
 }
 

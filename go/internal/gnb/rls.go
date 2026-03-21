@@ -2,6 +2,7 @@ package gnb
 
 import (
 	"context"
+	"encoding/hex"
 	"net"
 
 	"github.com/acore2026/ueransim-go/internal/core/logging"
@@ -104,6 +105,7 @@ func (h *RlsTaskHandler) OnMessage(ctx context.Context, msg runtime.Message) err
 			}
 
 			if nasPdu != nil {
+				h.logger.Info("extracted NAS PDU from RRC", "hex", hex.EncodeToString(nasPdu))
 				return h.ngapTask.Send(runtime.Message{
 					Type:    "rls_to_ngap",
 					Payload: nasPdu,

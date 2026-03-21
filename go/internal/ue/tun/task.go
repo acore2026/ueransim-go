@@ -16,6 +16,7 @@ const (
 	MessageTypeTunToApp  runtime.MessageType = "tun_to_app"
 	MessageTypeTunError  runtime.MessageType = "tun_error"
 	MessageTypeConfigure runtime.MessageType = "configure_tun"
+	MessageTypeRelease   runtime.MessageType = "release_tun"
 )
 
 type AppToTunMessage struct {
@@ -152,6 +153,14 @@ func (h *TaskHandler) OnMessage(ctx context.Context, msg runtime.Message) error 
 		if err := h.configure(); err != nil {
 			return err
 		}
+	case MessageTypeRelease:
+		h.logger.Info("releasing TUN device")
+		if h.device != nil {
+			h.device.Close()
+			h.device = nil
+		}
+		h.configured = false
+		h.readLoopStarted = false
 	}
 	return nil
 }

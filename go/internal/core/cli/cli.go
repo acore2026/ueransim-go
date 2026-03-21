@@ -54,6 +54,12 @@ func (h *CliHandler) processCommand(line string) {
 	case "exit", "quit":
 		h.logger.Info("exit requested via CLI")
 		os.Exit(0)
+	case "ps-modify":
+		h.logger.Info("triggering PDU session modification via CLI")
+		_ = h.targetTask.Send(runtime.Message{Type: "nas_pdu_session_modification"})
+	case "ps-release":
+		h.logger.Info("triggering PDU session release via CLI")
+		_ = h.targetTask.Send(runtime.Message{Type: "nas_pdu_session_release"})
 	default:
 		h.logger.Info("unknown command", "cmd", cmd)
 	}

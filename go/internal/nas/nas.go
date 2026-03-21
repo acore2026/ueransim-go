@@ -37,6 +37,12 @@ const (
 	MsgTypePduSessionEstablishmentRequest byte = 0xC1
 	MsgTypePduSessionEstablishmentAccept  byte = 0xC2
 	MsgTypePduSessionEstablishmentReject  byte = 0xC3
+	MsgTypePduSessionModificationRequest  byte = 0xC9
+	MsgTypePduSessionModificationCommand  byte = 0xCA
+	MsgTypePduSessionModificationComplete byte = 0xCB
+	MsgTypePduSessionReleaseRequest       byte = 0xD1
+	MsgTypePduSessionReleaseCommand       byte = 0xD2
+	MsgTypePduSessionReleaseComplete      byte = 0xD3
 )
 
 // IE is the interface for all Information Elements
