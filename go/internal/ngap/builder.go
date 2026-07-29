@@ -24,6 +24,13 @@ type InitialContextSetupData struct {
 	Sessions    []SessionResourceSetup
 }
 
+type PDUSessionResourceSetupData struct {
+	AMFUENGAPID int64
+	RANUENGAPID int64
+	NASPDU      []byte
+	Sessions    []SessionResourceSetup
+}
+
 func BuildNGSetupRequest(gnbName string, gnbID []byte, bitLength uint64, plmnID []byte) (*ngapType.NGAPPDU, error) {
 	pdu := &ngapType.NGAPPDU{
 		Present: ngapType.NGAPPDUPresentInitiatingMessage,
@@ -267,6 +274,23 @@ func GetNasPdu(pdu *ngapType.NGAPPDU) []byte {
 				}
 			}
 		}
+	case ngapType.ProcedureCodePDUSessionResourceSetup:
+		req := ini.Value.PDUSessionResourceSetupRequest
+		if req == nil {
+			return nil
+		}
+		for _, ie := range req.ProtocolIEs.List {
+			switch ie.Id.Value {
+			case ngapType.ProtocolIEIDNASPDU:
+				return []byte(ie.Value.NASPDU.Value)
+			case ngapType.ProtocolIEIDPDUSessionResourceSetupListSUReq:
+				for _, item := range ie.Value.PDUSessionResourceSetupListSUReq.List {
+					if item.PDUSessionNASPDU != nil {
+						return []byte(item.PDUSessionNASPDU.Value)
+					}
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -292,35 +316,13 @@ func ParseInitialContextSetupRequest(pdu *ngapType.NGAPPDU) (*InitialContextSetu
 			result.NASPDU = append([]byte(nil), ie.Value.NASPDU.Value...)
 		case ngapType.ProtocolIEIDPDUSessionResourceSetupListCxtReq:
 			for _, item := range ie.Value.PDUSessionResourceSetupListCxtReq.List {
-				transfer := ngapType.PDUSessionResourceSetupRequestTransfer{}
-				raw := append([]byte(nil), item.PDUSessionResourceSetupRequestTransfer...)
-				if err := aper.UnmarshalWithParams(raw, &transfer, "valueExt"); err != nil {
+				setup, err := parsePDUSessionResourceSetup(
+					item.PDUSessionID.Value,
+					item.NASPDU,
+					item.PDUSessionResourceSetupRequestTransfer,
+				)
+				if err != nil {
 					return nil, err
-				}
-
-				setup := SessionResourceSetup{
-					PDUSessionID: uint8(item.PDUSessionID.Value),
-				}
-				if item.NASPDU != nil {
-					setup.NASPDU = append([]byte(nil), item.NASPDU.Value...)
-				}
-
-				for _, transferIE := range transfer.ProtocolIEs.List {
-					switch transferIE.Id.Value {
-					case ngapType.ProtocolIEIDULNGUUPTNLInformation:
-						info := transferIE.Value.ULNGUUPTNLInformation
-						if info != nil && info.Present == ngapType.UPTransportLayerInformationPresentGTPTunnel {
-							ipv4, _ := ngapConvert.IPAddressToString(info.GTPTunnel.TransportLayerAddress)
-							setup.RemoteGTPIP = ipv4
-							setup.RemoteTEID = binary.BigEndian.Uint32(info.GTPTunnel.GTPTEID.Value)
-						}
-					case ngapType.ProtocolIEIDQosFlowSetupRequestList:
-						if transferIE.Value.QosFlowSetupRequestList != nil {
-							for _, item := range transferIE.Value.QosFlowSetupRequestList.List {
-								setup.QFIs = append(setup.QFIs, uint8(item.QosFlowIdentifier.Value))
-							}
-						}
-					}
 				}
 
 				if result.NASPDU == nil && len(setup.NASPDU) > 0 {
@@ -332,6 +334,89 @@ func ParseInitialContextSetupRequest(pdu *ngapType.NGAPPDU) (*InitialContextSetu
 	}
 
 	return result, nil
+}
+
+func ParsePDUSessionResourceSetupRequest(pdu *ngapType.NGAPPDU) (*PDUSessionResourceSetupData, error) {
+	if pdu.Present != ngapType.NGAPPDUPresentInitiatingMessage {
+		return nil, nil
+	}
+	ini := pdu.InitiatingMessage
+	if ini.ProcedureCode.Value != ngapType.ProcedureCodePDUSessionResourceSetup {
+		return nil, nil
+	}
+
+	req := ini.Value.PDUSessionResourceSetupRequest
+	if req == nil {
+		return nil, nil
+	}
+
+	result := &PDUSessionResourceSetupData{}
+	for _, ie := range req.ProtocolIEs.List {
+		switch ie.Id.Value {
+		case ngapType.ProtocolIEIDAMFUENGAPID:
+			result.AMFUENGAPID = ie.Value.AMFUENGAPID.Value
+		case ngapType.ProtocolIEIDRANUENGAPID:
+			result.RANUENGAPID = ie.Value.RANUENGAPID.Value
+		case ngapType.ProtocolIEIDNASPDU:
+			result.NASPDU = append([]byte(nil), ie.Value.NASPDU.Value...)
+		case ngapType.ProtocolIEIDPDUSessionResourceSetupListSUReq:
+			for _, item := range ie.Value.PDUSessionResourceSetupListSUReq.List {
+				setup, err := parsePDUSessionResourceSetup(
+					item.PDUSessionID.Value,
+					item.PDUSessionNASPDU,
+					item.PDUSessionResourceSetupRequestTransfer,
+				)
+				if err != nil {
+					return nil, err
+				}
+				if result.NASPDU == nil && len(setup.NASPDU) > 0 {
+					result.NASPDU = append([]byte(nil), setup.NASPDU...)
+				}
+				result.Sessions = append(result.Sessions, setup)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func parsePDUSessionResourceSetup(sessionID int64, nasPDU *ngapType.NASPDU, rawTransfer []byte) (SessionResourceSetup, error) {
+	setup := SessionResourceSetup{
+		PDUSessionID: uint8(sessionID),
+	}
+	if nasPDU != nil {
+		setup.NASPDU = append([]byte(nil), nasPDU.Value...)
+	}
+
+	transfer := ngapType.PDUSessionResourceSetupRequestTransfer{}
+	raw := append([]byte(nil), rawTransfer...)
+	if err := aper.UnmarshalWithParams(raw, &transfer, "valueExt"); err != nil {
+		return SessionResourceSetup{}, err
+	}
+
+	for _, transferIE := range transfer.ProtocolIEs.List {
+		switch transferIE.Id.Value {
+		case ngapType.ProtocolIEIDULNGUUPTNLInformation:
+			info := transferIE.Value.ULNGUUPTNLInformation
+			if info != nil &&
+				info.Present == ngapType.UPTransportLayerInformationPresentGTPTunnel &&
+				info.GTPTunnel != nil {
+				ipv4, _ := ngapConvert.IPAddressToString(info.GTPTunnel.TransportLayerAddress)
+				setup.RemoteGTPIP = ipv4
+				if len(info.GTPTunnel.GTPTEID.Value) >= 4 {
+					setup.RemoteTEID = binary.BigEndian.Uint32(info.GTPTunnel.GTPTEID.Value)
+				}
+			}
+		case ngapType.ProtocolIEIDQosFlowSetupRequestList:
+			if transferIE.Value.QosFlowSetupRequestList != nil {
+				for _, item := range transferIE.Value.QosFlowSetupRequestList.List {
+					setup.QFIs = append(setup.QFIs, uint8(item.QosFlowIdentifier.Value))
+				}
+			}
+		}
+	}
+
+	return setup, nil
 }
 
 type SessionResourceSetupResponse struct {
@@ -395,6 +480,68 @@ func BuildInitialContextSetupResponse(amfUeNgapID, ranUeNgapID int64, sessions [
 				Value: ngapType.InitialContextSetupResponseIEsValue{
 					Present:                           ngapType.InitialContextSetupResponseIEsPresentPDUSessionResourceSetupListCxtRes,
 					PDUSessionResourceSetupListCxtRes: setupList,
+				},
+			},
+		)
+	}
+
+	return pdu, nil
+}
+
+func BuildPDUSessionResourceSetupResponse(amfUeNgapID, ranUeNgapID int64, sessions []SessionResourceSetupResponse) (*ngapType.NGAPPDU, error) {
+	pdu := &ngapType.NGAPPDU{
+		Present: ngapType.NGAPPDUPresentSuccessfulOutcome,
+		SuccessfulOutcome: &ngapType.SuccessfulOutcome{
+			ProcedureCode: ngapType.ProcedureCode{Value: ngapType.ProcedureCodePDUSessionResourceSetup},
+			Criticality:   ngapType.Criticality{Value: ngapType.CriticalityPresentReject},
+			Value: ngapType.SuccessfulOutcomeValue{
+				Present: ngapType.SuccessfulOutcomePresentPDUSessionResourceSetupResponse,
+				PDUSessionResourceSetupResponse: &ngapType.PDUSessionResourceSetupResponse{
+					ProtocolIEs: ngapType.ProtocolIEContainerPDUSessionResourceSetupResponseIEs{
+						List: []ngapType.PDUSessionResourceSetupResponseIEs{
+							{
+								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDAMFUENGAPID},
+								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentIgnore},
+								Value: ngapType.PDUSessionResourceSetupResponseIEsValue{
+									Present:     ngapType.PDUSessionResourceSetupResponseIEsPresentAMFUENGAPID,
+									AMFUENGAPID: &ngapType.AMFUENGAPID{Value: amfUeNgapID},
+								},
+							},
+							{
+								Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDRANUENGAPID},
+								Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentIgnore},
+								Value: ngapType.PDUSessionResourceSetupResponseIEsValue{
+									Present:     ngapType.PDUSessionResourceSetupResponseIEsPresentRANUENGAPID,
+									RANUENGAPID: &ngapType.RANUENGAPID{Value: ranUeNgapID},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if len(sessions) > 0 {
+		setupList := &ngapType.PDUSessionResourceSetupListSURes{}
+		for _, session := range sessions {
+			transfer, err := buildPDUSessionResourceSetupResponseTransfer(session)
+			if err != nil {
+				return nil, err
+			}
+			setupList.List = append(setupList.List, ngapType.PDUSessionResourceSetupItemSURes{
+				PDUSessionID:                            ngapType.PDUSessionID{Value: int64(session.PDUSessionID)},
+				PDUSessionResourceSetupResponseTransfer: transfer,
+			})
+		}
+		pdu.SuccessfulOutcome.Value.PDUSessionResourceSetupResponse.ProtocolIEs.List = append(
+			pdu.SuccessfulOutcome.Value.PDUSessionResourceSetupResponse.ProtocolIEs.List,
+			ngapType.PDUSessionResourceSetupResponseIEs{
+				Id:          ngapType.ProtocolIEID{Value: ngapType.ProtocolIEIDPDUSessionResourceSetupListSURes},
+				Criticality: ngapType.Criticality{Value: ngapType.CriticalityPresentIgnore},
+				Value: ngapType.PDUSessionResourceSetupResponseIEsValue{
+					Present:                          ngapType.PDUSessionResourceSetupResponseIEsPresentPDUSessionResourceSetupListSURes,
+					PDUSessionResourceSetupListSURes: setupList,
 				},
 			},
 		)

@@ -21,8 +21,8 @@ This subtree contains the Go implementation of UERANSIM, migrated from the origi
     - NAS Integrity (NIA2) and Ciphering (NEA2) using AES.
     - 3GPP Key Derivation (KDF).
 - **Nodes:** Functional UE and gNodeB state machines for live registration, bearer setup, and initial user-plane packet forwarding with free5GC.
-- **NAS Transport:** Bidirectional NAS PDU relaying between UE and Core (Uplink/Downlink), including the narrow happy-path PDU session trigger and NAS delivery from `InitialContextSetupRequest`.
-- **NGAP Bearer Setup:** `InitialContextSetupRequest` session resources are parsed into local gNB session state, and the gNB now sends `InitialContextSetupResponse` with the RAN-side tunnel information needed by SMF.
+- **NAS Transport:** Bidirectional NAS PDU relaying between UE and Core (Uplink/Downlink), including NAS delivery from `InitialContextSetupRequest` and standalone `PDUSessionResourceSetupRequest`.
+- **NGAP Bearer Setup:** Session resources carried by `InitialContextSetupRequest` or standalone `PDUSessionResourceSetupRequest` are parsed into local gNB session state, and the gNB sends the matching response with the RAN-side tunnel information needed by SMF.
 - **User Plane:** The gNB binds a real GTP-U socket, allocates local TEIDs, encapsulates UE-originated packets toward the UPF, and decapsulates matching downlink packets back toward the UE. The UE now delays TUN configuration until `PDU Session Establishment Accept` provides the assigned address.
 - **NAS Adapter Boundary:** The local `go/internal/nas` package now acts as a stable adapter over `github.com/acore2026/nas` for the supported happy-path messages. UE and gNB procedure code remain handwritten and continue to consume local helper functions and DTOs instead of external NAS package types directly.
 - **Bootstrap:** YAML configuration loading and basic interactive CLI.
