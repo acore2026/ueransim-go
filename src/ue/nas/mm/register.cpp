@@ -425,6 +425,9 @@ void NasMm::receiveInitialRegistrationAccept(const nas::RegistrationAccept &msg)
         sendNasMessage(nas::RegistrationComplete{});
     }
 
+    sendCooperationTestIfConfigured();
+    sendNasTransportTestIfConfigured();
+
     auto regType = m_lastRegistrationRequest->registrationType.registrationType;
 
     if (regType == nas::ERegistrationType::INITIAL_REGISTRATION)

@@ -35,6 +35,34 @@ useNamespace: false
 # Optional prefix used when deriving the namespace name.
 nsNamePrefix: 'ueransim'
 
+# Optional AMF Cooperation/AP Container test message.
+# When enabled, nr-ue sends one protected UL Cooperation NAS message after registration completes.
+cooperationTest:
+  enabled: false
+  messageIdentity: 1
+  containerType: 0x0101
+  # 0 means auto-generate a PTI/message ID for each UL Cooperation request.
+  pti: 0
+  payloadId: 0x1234
+  flags: 0x02
+  includeIe10: true
+  ie10Value: 1
+  intentId: 'ueransim-test'
+  issuer: 'ueransim'
+  intentPriority: 1
+  intentType: 'location'
+  intentDescription: 'locate target'
+  object: 'ue'
+  constraint: ''
+  target: 'amf-test'
+
+# Sends a UL NAS TRANSPORT after registration for AMF NAgent passthrough testing.
+# When payload is empty, the intent JSON fields from cooperationTest are reused.
+nasTransportTest:
+  enabled: false
+  payloadContainerType: 4
+  payload: ''
+
 # List of gNB IP addresses for Radio Link Simulation
 gnbSearchList:
   - 127.0.0.1

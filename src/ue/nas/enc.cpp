@@ -134,7 +134,14 @@ std::unique_ptr<nas::SecuredMmMessage> Encrypt(NasSecurityContext &ctx, const na
     return Encrypt(ctx, std::move(stream), msgType, bypassCiphering, noCipheredHeader);
 }
 
-std::unique_ptr<nas::NasMessage> Decrypt(NasSecurityContext &ctx, const nas::SecuredMmMessage &msg)
+std::unique_ptr<nas::SecuredMmMessage> EncryptPlainMm(NasSecurityContext &ctx, OctetString &&plainNasMessage,
+                                                      nas::EMessageType msgType, bool bypassCiphering,
+                                                      bool noCipheredHeader)
+{
+    return Encrypt(ctx, std::move(plainNasMessage), msgType, bypassCiphering, noCipheredHeader);
+}
+
+bool DecryptPlainMm(NasSecurityContext &ctx, const nas::SecuredMmMessage &msg, OctetString &plainNasMessage)
 {
     auto estimatedCount = ctx.estimatedDownlinkCount(msg.sequenceNumber);
 
@@ -149,11 +156,20 @@ std::unique_ptr<nas::NasMessage> Decrypt(NasSecurityContext &ctx, const nas::Sec
     if (mac != (uint32_t)msg.messageAuthenticationCode)
     {
         // MAC mismatch
-        return nullptr;
+        return false;
     }
 
     ctx.updateDownlinkCount(estimatedCount);
-    OctetString decryptedData = DecryptData(encAlg, estimatedCount, is3gppAccess, encKey, msg.sht, msg.plainNasMessage);
+    plainNasMessage = DecryptData(encAlg, estimatedCount, is3gppAccess, encKey, msg.sht, msg.plainNasMessage);
+    return true;
+}
+
+std::unique_ptr<nas::NasMessage> Decrypt(NasSecurityContext &ctx, const nas::SecuredMmMessage &msg)
+{
+    OctetString decryptedData;
+    if (!DecryptPlainMm(ctx, msg, decryptedData))
+        return nullptr;
+
     OctetView buff{decryptedData};
     return nas::DecodeNasMessage(buff);
 }

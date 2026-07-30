@@ -71,6 +71,9 @@ class NasMm
     int64_t m_lastTimePlmnSearchFailureLogged{};
     // Last time MM state changed
     int64_t m_lastTimeMmStateChange{};
+    bool m_cooperationTestSent{};
+    bool m_nasTransportTestSent{};
+    int m_nextCooperationPti{1};
 
     friend class UeCmdHandler;
     friend class NasSm;
@@ -100,11 +103,22 @@ class NasMm
 
   private: /* Messaging */
     EProcRc sendNasMessage(const nas::PlainMmMessage &msg);
+    EProcRc sendRawPlainNasMessage(OctetString &&plainNasMessage, nas::EMessageType messageType);
     void receiveNasMessage(const nas::NasMessage &msg);
     void receiveMmMessage(const nas::PlainMmMessage &msg);
     void receiveMmStatus(const nas::FiveGMmStatus &msg);
     void sendMmStatus(nas::EMmCause cause);
     bool checkForReplay(const nas::SecuredMmMessage &msg);
+    bool tryHandleRawPlainNasMessage(const OctetString &plainNasMessage);
+
+  private: /* Cooperation test */
+    void sendCooperationTestIfConfigured();
+    OctetString buildCooperationTestPayload() const;
+    OctetString buildUlCooperationPlainNas();
+    int allocateCooperationPti();
+    void receiveDlCooperationPlainNas(const OctetString &plainNasMessage);
+    void sendNasTransportTestIfConfigured();
+    OctetString buildUlNasTransportTestPlainNas();
 
   private: /* Transport */
     void receiveDlNasTransport(const nas::DlNasTransport &msg);

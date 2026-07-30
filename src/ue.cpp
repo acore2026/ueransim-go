@@ -168,6 +168,52 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->useNamespace = yaml::GetBool(config, "useNamespace");
     if (yaml::HasField(config, "nsNamePrefix"))
         result->nsNamePrefix = yaml::GetString(config, "nsNamePrefix", 1, 64);
+    if (yaml::HasField(config, "cooperationTest"))
+    {
+        auto coop = config["cooperationTest"];
+        if (yaml::HasField(coop, "enabled"))
+            result->cooperationTest.enabled = yaml::GetBool(coop, "enabled");
+        if (yaml::HasField(coop, "messageIdentity"))
+            result->cooperationTest.messageIdentity = yaml::GetInt32(coop, "messageIdentity", 0, 255);
+        if (yaml::HasField(coop, "containerType"))
+            result->cooperationTest.containerType = yaml::GetInt32(coop, "containerType", 0, 0xFFFF);
+        if (yaml::HasField(coop, "pti"))
+            result->cooperationTest.pti = yaml::GetInt32(coop, "pti", 0, 255);
+        if (yaml::HasField(coop, "payloadId"))
+            result->cooperationTest.payloadId = yaml::GetInt32(coop, "payloadId", 0, 0xFFFF);
+        if (yaml::HasField(coop, "flags"))
+            result->cooperationTest.flags = yaml::GetInt32(coop, "flags", 0, 255);
+        if (yaml::HasField(coop, "includeIe10"))
+            result->cooperationTest.includeIe10 = yaml::GetBool(coop, "includeIe10");
+        if (yaml::HasField(coop, "ie10Value"))
+            result->cooperationTest.ie10Value = yaml::GetInt32(coop, "ie10Value", 0, 255);
+        if (yaml::HasField(coop, "intentId"))
+            result->cooperationTest.intentId = yaml::GetString(coop, "intentId", 0, 255);
+        if (yaml::HasField(coop, "issuer"))
+            result->cooperationTest.issuer = yaml::GetString(coop, "issuer", 0, 255);
+        if (yaml::HasField(coop, "intentPriority"))
+            result->cooperationTest.intentPriority = yaml::GetInt32(coop, "intentPriority", 0, 0x7FFFFFFF);
+        if (yaml::HasField(coop, "intentType"))
+            result->cooperationTest.intentType = yaml::GetString(coop, "intentType", 0, 255);
+        if (yaml::HasField(coop, "intentDescription"))
+            result->cooperationTest.intentDescription = yaml::GetString(coop, "intentDescription", 0, 4096);
+        if (yaml::HasField(coop, "object"))
+            result->cooperationTest.object = yaml::GetString(coop, "object", 0, 255);
+        if (yaml::HasField(coop, "constraint"))
+            result->cooperationTest.constraint = yaml::GetString(coop, "constraint", 0, 4096);
+        if (yaml::HasField(coop, "target"))
+            result->cooperationTest.target = yaml::GetString(coop, "target", 0, 255);
+    }
+    if (yaml::HasField(config, "nasTransportTest"))
+    {
+        auto transport = config["nasTransportTest"];
+        if (yaml::HasField(transport, "enabled"))
+            result->nasTransportTest.enabled = yaml::GetBool(transport, "enabled");
+        if (yaml::HasField(transport, "payloadContainerType"))
+            result->nasTransportTest.payloadContainerType = yaml::GetInt32(transport, "payloadContainerType", 0, 15);
+        if (yaml::HasField(transport, "payload"))
+            result->nasTransportTest.payload = yaml::GetString(transport, "payload", 0, 4096);
+    }
 
     yaml::AssertHasField(config, "integrity");
     yaml::AssertHasField(config, "ciphering");
@@ -380,6 +426,8 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->integrityMaxRate = g_refConfig->integrityMaxRate;
     c->uacAic = g_refConfig->uacAic;
     c->uacAcc = g_refConfig->uacAcc;
+    c->cooperationTest = g_refConfig->cooperationTest;
+    c->nasTransportTest = g_refConfig->nasTransportTest;
 
     if (c->supi.has_value())
         IncrementNumber(c->supi->value, ueIndex);

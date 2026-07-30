@@ -89,6 +89,33 @@ struct IntegrityMaxDataRateConfig
     bool downlinkFull{};
 };
 
+struct CooperationTestConfig
+{
+    bool enabled{};
+    int messageIdentity{1};
+    int containerType{0x0101};
+    int pti{};
+    int payloadId{0x1234};
+    int flags{0x02};
+    bool includeIe10{true};
+    int ie10Value{1};
+    std::string intentId{"ueransim-test"};
+    std::string issuer{"ueransim"};
+    int intentPriority{1};
+    std::string intentType{"location"};
+    std::string intentDescription{"locate target"};
+    std::string object{"ue"};
+    std::string constraint{};
+    std::string target{"amf-test"};
+};
+
+struct NasTransportTestConfig
+{
+    bool enabled{};
+    int payloadContainerType{4};
+    std::string payload{};
+};
+
 struct UeConfig
 {
     /* Read from config file */
@@ -114,6 +141,8 @@ struct UeConfig
     std::optional<std::string> tunNetmask{};
     bool useNamespace{false};
     std::optional<std::string> nsNamePrefix{};
+    CooperationTestConfig cooperationTest{};
+    NasTransportTestConfig nasTransportTest{};
 
     struct
     {

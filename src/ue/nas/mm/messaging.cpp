@@ -200,6 +200,55 @@ EProcRc NasMm::sendNasMessage(const nas::PlainMmMessage &msg)
     return EProcRc::OK;
 }
 
+EProcRc NasMm::sendRawPlainNasMessage(OctetString &&plainNasMessage, nas::EMessageType messageType)
+{
+    if (!m_base->shCtx.hasActiveCell())
+    {
+        m_logger->debug("Raw NAS Transport aborted, no active cell");
+        return EProcRc::STAY;
+    }
+
+    if (m_cmState == ECmState::CM_IDLE)
+    {
+        m_logger->warn("Raw NAS Transport aborted, Service Request is needed for uplink signalling");
+        if (m_mmState != EMmState::MM_SERVICE_REQUEST_INITIATED)
+            serviceRequestRequiredForSignalling();
+        return EProcRc::STAY;
+    }
+
+    bool hasNsCtx =
+        m_usim->m_currentNsCtx && (m_usim->m_currentNsCtx->integrity != nas::ETypeOfIntegrityProtectionAlgorithm::IA0 ||
+                                   m_usim->m_currentNsCtx->ciphering != nas::ETypeOfCipheringAlgorithm::EA0);
+
+    if (!hasNsCtx)
+    {
+        m_logger->warn("Raw NAS Transport aborted, no active NAS security context");
+        return EProcRc::STAY;
+    }
+
+    if (m_usim->m_currentNsCtx->uplinkCount.sqn == 0xFF &&
+        static_cast<int>(m_usim->m_currentNsCtx->uplinkCount.overflow) == 0xFFFF)
+    {
+        m_logger->warn("Uplink NAS Count about to wrap around, performing local release of NAS connection and "
+                       "deleting current NSC");
+        m_usim->m_currentNsCtx = nullptr;
+        localReleaseConnection(false);
+        return EProcRc::STAY;
+    }
+
+    OctetString pdu;
+    auto encrypted = nas_enc::EncryptPlainMm(*m_usim->m_currentNsCtx, std::move(plainNasMessage), messageType, false,
+                                             false);
+    nas::EncodeNasMessage(*encrypted, pdu);
+
+    auto m = std::make_unique<NmUeNasToRrc>(NmUeNasToRrc::UPLINK_NAS_DELIVERY);
+    m->pduId = 0;
+    m->nasPdu = std::move(pdu);
+    m_base->rrcTask->push(std::move(m));
+
+    return EProcRc::OK;
+}
+
 void NasMm::receiveNasMessage(const nas::NasMessage &msg)
 {
     if (msg.epd == nas::EExtendedProtocolDiscriminator::SESSION_MANAGEMENT_MESSAGES)
@@ -272,14 +321,19 @@ void NasMm::receiveNasMessage(const nas::NasMessage &msg)
         }
     }
 
-    auto decrypted = nas_enc::Decrypt(*m_usim->m_currentNsCtx, securedMm);
-    if (decrypted == nullptr)
+    OctetString decryptedData;
+    if (!nas_enc::DecryptPlainMm(*m_usim->m_currentNsCtx, securedMm, decryptedData))
     {
         m_logger->err("MAC mismatch in NAS encryption. Ignoring received NAS Message.");
         sendMmStatus(nas::EMmCause::MAC_FAILURE);
         return;
     }
 
+    if (tryHandleRawPlainNasMessage(decryptedData))
+        return;
+
+    OctetView buff{decryptedData};
+    auto decrypted = nas::DecodeNasMessage(buff);
     auto &innerMsg = *decrypted;
     if (innerMsg.epd == nas::EExtendedProtocolDiscriminator::MOBILITY_MANAGEMENT_MESSAGES)
     {

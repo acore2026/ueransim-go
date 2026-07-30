@@ -15,8 +15,27 @@
 
 #include <asn/rrc/ASN_RRC_EstablishmentCause.h>
 
+#include <cctype>
+#include <string>
+
 namespace nr::ue
 {
+
+static std::string PrintableTransportAscii(const OctetString &data)
+{
+    if (data.length() == 0)
+        return "";
+
+    for (int i = 0; i < data.length(); i++)
+    {
+        auto c = data.getI(i);
+        if (c != '\r' && c != '\n' && c != '\t' && !std::isprint(c))
+            return "";
+    }
+
+    const auto *begin = reinterpret_cast<const char *>(data.data());
+    return std::string(begin, begin + data.length());
+}
 
 static bool IsUplinkSmMessage(nas::EMessageType type)
 {
@@ -38,6 +57,16 @@ static bool IsUplinkSmMessage(nas::EMessageType type)
 void NasMm::receiveDlNasTransport(const nas::DlNasTransport &msg)
 {
     m_timers->t3346.stop();
+
+    if (msg.payloadContainerType.payloadContainerType == nas::EPayloadContainerType::SOR_TRANSPARENT_CONTAINER)
+    {
+        const auto &payload = msg.payloadContainer.data;
+        auto printable = PrintableTransportAscii(payload);
+        m_logger->info("DL NAS Transport type=4 received payloadHex=[%s]", payload.toHexString().c_str());
+        if (!printable.empty())
+            m_logger->info("DL NAS Transport type=4 payloadText=[%s]", printable.c_str());
+        return;
+    }
 
     if (msg.payloadContainerType.payloadContainerType != nas::EPayloadContainerType::N1_SM_INFORMATION)
     {
